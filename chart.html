@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STL IRR Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background: #0f172a; color: #e6eef8; font-family: sans-serif; }
+    .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(6px); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); }
+    h1, h3 { color: #e6eef8; }
+  </style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+  <main class="max-w-7xl mx-auto">
+    <h1 class="text-2xl md:text-3xl font-bold mb-6">STL Digital IRR Overview</h1>
+
+    <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Bar chart -->
+      <div class="glass card">
+        <h3 class="text-lg mb-3">IRR over Years</h3>
+        <canvas id="irrBarChart"></canvas>
+      </div>
+
+      <!-- Line chart -->
+      <div class="glass card">
+        <h3 class="text-lg mb-3">IRR Trend</h3>
+        <canvas id="irrLineChart"></canvas>
+      </div>
+
+      <!-- Pie chart -->
+      <div class="glass card">
+        <h3 class="text-lg mb-3">IRR Distribution</h3>
+        <canvas id="irrPieChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Table -->
+    <section class="glass card mt-6">
+      <h3 class="text-lg mb-3">IRR Table</h3>
+      <table class="w-full text-left border-collapse border border-white/20" id="irrTable">
+        <thead>
+          <tr>
+            <th class="border border-white/20 px-4 py-2">Year</th>
+            <th class="border border-white/20 px-4 py-2">IRR</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    let chartData = {
+    };
+    const colors = ["#60a5fa","#f472b6","#34d399","#facc15","#a78bfa"];
+
+    let barChart, lineChart, pieChart;
+    function renderCharts(years, irrValues) {
+      // Destroy previous charts if they exist
+      if(barChart) barChart.destroy();
+      if(lineChart) lineChart.destroy();
+      if(pieChart) pieChart.destroy();
+      // Bar chart
+      barChart = new Chart(document.getElementById("irrBarChart"), {
+        type: "bar",
+        data: { labels: years, datasets:[{label:"IRR", data: irrValues, backgroundColor: colors, borderRadius:6}] },
+        options: { plugins:{legend:{display:false, labels:{color:"#e6eef8"}}},
+          scales:{x:{ticks:{color:"#cbd5e1"}},y:{ticks:{color:"#cbd5e1"}, beginAtZero:true}}}
+      });
+
+      // Line chart
+      lineChart = new Chart(document.getElementById("irrLineChart"), {
+        type: "line",
+        data: { labels: years, datasets:[{label:"IRR", data: irrValues, borderColor:"#60a5fa", fill:true, backgroundColor:"rgba(96,165,250,0.15)", tension:0.4, pointBackgroundColor: colors}] },
+        options: { plugins:{legend:{labels:{color:"#e6eef8"}}},
+          scales:{x:{ticks:{color:"#cbd5e1"}},y:{ticks:{color:"#cbd5e1"}, beginAtZero:true}}}
+      });
+
+      // Pie chart
+      pieChart = new Chart(document.getElementById("irrPieChart"), {
+        type: "pie",
+        data: { labels: years, datasets:[{data: irrValues, backgroundColor: colors}] },
+        options: { plugins:{legend:{labels:{color:"#e6eef8"}}} }
+      });
+    }
+
+    // On load, try to read IRR data from localStorage
+    function renderChart(irrData) {
+      console.log('[chart.html] Rendering IRR data:', irrData);
+      // Build labels and values based on object structure
+      const labels = irrData.map((d, i) => {
+        if (typeof d === 'object' && d !== null) {
+          if (d.year) return `Year ${d.year}`;
+          if (d.label) return d.label;
+          return `Value ${i+1}`;
+        } else {
+          return `Value ${i+1}`;
+        }
+      });
+      const irrValues = irrData.map(d => typeof d === 'object' && d !== null ? parseFloat(d.irr) : parseFloat(d));
+      renderCharts(labels, irrValues);
+      // Render table
+      const tbody = document.getElementById('irrTable').querySelector('tbody');
+      tbody.innerHTML = '';
+      irrData.forEach((d, i) => {
+        let label = labels[i];
+        let value = irrValues[i];
+        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2">${value}%</td></tr>`;
+      });
+    }
+
+    let irrDataReceived = false;
+    const storedIrr = localStorage.getItem('irrValues');
+    if (storedIrr) {
+      try {
+        const irrArray = JSON.parse(storedIrr);
+        if (Array.isArray(irrArray) && irrArray.length) {
+          irrDataReceived = true;
+          renderChart(irrArray);
+        }
+      } catch(e) { console.error('Failed to parse IRR data from localStorage', e); }
+    }
+    if (!irrDataReceived) {
+      // Show waiting message or clear chart
+      console.log('Waiting for IRR data...');
+      document.getElementById("irrBarChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById("irrLineChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById("irrPieChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById('irrTable').querySelector('tbody').innerHTML = '<tr><td colspan="2" style="color:#e2e8f8;font-size:14px;">Waiting for IRR data...</td></tr>';
+    }
+
+    // On load, try to read IRR data from localStorage
+    function updateChartFromStorage() {
+      const storedIrr = localStorage.getItem('irrValues');
+      if (storedIrr) {
+        try {
+          const irrArray = JSON.parse(storedIrr);
+          if (Array.isArray(irrArray) && irrArray.length) {
+            renderChart(irrArray);
+            return;
+          }
+        } catch(e) { console.error('Failed to parse IRR data from localStorage', e); }
+      }
+      // Show waiting message or clear chart
+      document.getElementById("irrBarChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById("irrLineChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById("irrPieChart").getContext('2d').clearRect(0,0,400,400);
+      document.getElementById('irrTable').querySelector('tbody').innerHTML = '<tr><td colspan="2" style="color:#e2e8f8;font-size:14px;">Waiting for IRR data...</td></tr>';
+    }
+    updateChartFromStorage();
+    // Listen for localStorage changes (auto-update chart)
+    window.addEventListener('storage', function(event) {
+      if (event.key === 'irrValues') {
+        updateChartFromStorage();
+      }
+    });
+  </script>
+</body>
+</html>

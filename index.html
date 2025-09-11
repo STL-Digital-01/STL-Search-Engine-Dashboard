@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Main Page with Login</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      text-align: center;
+    }
+
+    .login-container {
+      margin-top: 100px;
+      background: #fff;
+      color: #333;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      display: inline-block;
+    }
+
+    .iframe-container {
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      margin-top: 30px;
+      width: 100%;
+      height: 90vh;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+      gap: 10px;
+    }
+
+    iframe {
+      flex: 1;
+      height: 100%;
+      border: none;
+      border-radius: 10px;
+      transition: all 0.6s ease-in-out;
+      background: #fff;
+    }
+
+    .login-button {
+      background-color: #4285F4;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    .login-button:hover {
+      background-color: #357ae8;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Login Section -->
+  <div class="login-container" id="loginSection" style="display:block;">
+    <div class="widget-header">
+      <div class="logo">
+        <img width="206" height="48" src="https://www.stldigital.tech/wp-content/uploads/2023/04/Group-13545.png"
+          alt="STL Digital logo" />
+      </div>
+      <h1>Secure Access Required</h1>
+      <p>Sign in with Gmail to access the search widget</p>
+    </div>
+  <button class="login-button" id="loginBtn">Login with Google</button>
+ 
+    <div class="security-info">
+      <p>🛡️ Protected by Firebase</p>
+    </div>
+  </div>
+
+  <!-- Iframe Section -->
+  <div class="iframe-container" id="contentContainer" style="display: none;">
+  <iframe id="widgetIframe" src="widget.html"></iframe>
+  <iframe id="secondIframe" src="analytics.html"></iframe>
+
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyD_j5PVR3H2aBBs7C8E6kICEyGe-KxXlZY",
+      authDomain: "zincaipoc.firebaseapp.com",
+      projectId: "zincaipoc",
+      storageBucket: "zincaipoc.firebasestorage.app",
+      messagingSenderId: "1050545493288",
+      appId: "1:1050545493288:web:a4e79f3d2831962b5eac1d",
+      measurementId: "G-LYB7W7XRDX"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    const loginSection = document.getElementById('loginSection');
+    const contentContainer = document.getElementById('contentContainer');
+    const loginBtn = document.getElementById('loginBtn');
+    const widgetIframe = document.getElementById('widgetIframe');
+    const secondIframe = document.getElementById('secondIframe');
+
+  // Always show login page first
+  loginSection.style.display = 'block';
+  contentContainer.style.display = 'none';
+
+    loginBtn.addEventListener('click', async () => {
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/cloud-platform'); // Add required API scopes
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const accessToken = credential.accessToken;
+
+        // Send accessToken instead of Firebase token
+        widgetIframe.contentWindow.postMessage({
+          type: 'googleAccessToken',
+          token: accessToken
+        }, '*');
+        // Show iframes after login
+        loginSection.style.display = 'none';
+        contentContainer.style.display = 'flex';
+      } catch (error) {
+        console.error("Login failed:", error);
+        alert("Login failed: " + error.message);
+      }
+    });
+
+    // Logout button logic
+   
+
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>STL IRR Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background: linear-gradient(180deg,#0f172a 0%, #071129 55%);
+      color: #e6eef8;
+      font-family: sans-serif;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    .glass {
+      background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 0.75rem;
+      padding: 1rem;
+    }
+    .metric-list li {
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="max-w-3xl mx-auto space-y-6">
+    <header class="text-center">
+      <h1 id="dashboardTitle" class="text-3xl font-bold">STL IRR Dashboard</h1>
+      <p id="dashboardSubtitle" class="text-slate-300 mt-1">IRR data overview</p>
+    </header>
+
+    <section class="glass">
+      <h2 class="text-sm text-slate-300 mb-2">IRR Key Metrics</h2>
+      <ul id="irrMetrics" class="metric-list text-lg text-yellow-400 font-semibold"></ul>
+      <div class="mt-4">
+        <h3 class="text-sm text-slate-300 mb-2">Extra Metrics</h3>
+        <ul id="extraMetrics" class="text-base text-blue-300 font-semibold"></ul>
+      </div>
+      <div class="mt-4">
+        <h3 class="text-sm text-slate-300 mb-2">Summary Table</h3>
+        <table class="w-full text-left border-collapse border border-white/20" id="irrTable">
+          <thead>
+            <tr>
+              <th class="border border-white/20 px-4 py-2">Label/Year</th>
+              <th class="border border-white/20 px-4 py-2">IRR (%)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="mt-2 text-xs text-slate-400" id="lastUpdated"></div>
+    </section>
+
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+      <div class="glass card col-span-1 md:col-span-3">
+        <h3 class="text-lg mb-3">IRR Radar Chart</h3>
+        <canvas id="irrRadarChart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script>
+
+    let radarChart;
+    const colors = ["#60a5fa","#f472b6","#34d399","#facc15","#a78bfa","#fb7185","#38bdf8","#fbbf24","#a3e635","#f87171"];
+    function renderDashboard(irrData) {
+      console.log('[dashboard.html] Rendering IRR data:', irrData);
+      // Dynamic title/subtitle based on IRR data
+      const titleEl = document.getElementById('dashboardTitle');
+      const subtitleEl = document.getElementById('dashboardSubtitle');
+      let title = 'STL IRR Dashboard';
+      let subtitle = 'IRR data overview';
+      if (irrData.some(d => d.label && d.label.toLowerCase().includes('lead silver recovery'))) {
+        title = 'Lead Silver Recovery Project IRR';
+        subtitle = 'Varying IRRs for Lead Silver Recovery';
+      } else if (irrData.some(d => d.label && d.label.toLowerCase().includes('fumer'))) {
+        title = 'Fumer Project IRR';
+        subtitle = 'IRR for Fumer Technology';
+      } else if (irrData.some(d => d.year)) {
+        title = 'STL IRR Over Years';
+        subtitle = 'Year-wise IRR breakdown';
+      }
+      titleEl.textContent = title;
+      subtitleEl.textContent = subtitle;
+
+      // Filter and map IRR values
+      const irrMetrics = document.getElementById('irrMetrics');
+      const validIrrs = [];
+      irrMetrics.innerHTML = irrData.map((d, i) => {
+        let value = (typeof d === 'object' && d !== null) ? d.irr : d;
+        let num = parseFloat(value);
+        let isValid = value !== null && value !== undefined && !isNaN(num);
+        if (isValid) validIrrs.push(num);
+        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : `Value ${i+1}`)) : `Value ${i+1}`;
+        return `<li>${label}: ${isValid ? num + '%' : '<span style="color:#f87171">(missing)</span>'}</li>`;
+      }).join('');
+
+      // Extra Metrics
+      const avg = validIrrs.length ? (validIrrs.reduce((a,b)=>a+b,0)/validIrrs.length).toFixed(4) : '-';
+      const max = validIrrs.length ? Math.max(...validIrrs).toFixed(4) : '-';
+      const min = validIrrs.length ? Math.min(...validIrrs).toFixed(4) : '-';
+      let growth = '-';
+      if (validIrrs.length > 1) {
+        const first = validIrrs[0], last = validIrrs[validIrrs.length-1];
+        growth = (((last-first)/Math.abs(first))*100).toFixed(2) + '%';
+      }
+      document.getElementById('extraMetrics').innerHTML = `
+        <li>Average IRR: <span class="text-yellow-300">${avg !== '-' ? avg + '%' : '-'}</span></li>
+        <li>Highest IRR: <span class="text-green-300">${max !== '-' ? max + '%' : '-'}</span></li>
+        <li>Lowest IRR: <span class="text-red-300">${min !== '-' ? min + '%' : '-'}</span></li>
+        <li>Growth Rate: <span class="text-blue-300">${growth}</span></li>
+      `;
+
+      // Summary Table
+      const labels = irrData.map((d, i) => {
+        if (typeof d === 'object' && d !== null) {
+          if (d.year) return `Year ${d.year}`;
+          if (d.label) return d.label;
+          return `Value ${i+1}`;
+        } else {
+          return `Value ${i+1}`;
+        }
+      });
+      const tbody = document.getElementById('irrTable').querySelector('tbody');
+      tbody.innerHTML = '';
+      irrData.forEach((d, i) => {
+        let value = (typeof d === 'object' && d !== null) ? d.irr : d;
+        let num = parseFloat(value);
+        let isValid = value !== null && value !== undefined && !isNaN(num);
+        let label = labels[i];
+        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2">${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</td></tr>`;
+      });
+
+      // Last Updated Timestamp
+      const lastUpdatedEl = document.getElementById('lastUpdated');
+      const now = new Date();
+      lastUpdatedEl.textContent = `Last Updated: ${now.toLocaleString()}`;
+
+      // Radar Chart
+      if(radarChart) radarChart.destroy();
+      radarChart = new Chart(document.getElementById('irrRadarChart'), {
+        type: 'radar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'IRR (%)',
+            data: labels.map((_, i) => {
+              let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
+              let num = parseFloat(value);
+              return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
+            }),
+            backgroundColor: 'rgba(96,165,250,0.15)',
+            borderColor: '#60a5fa',
+            pointBackgroundColor: colors,
+            pointBorderColor: '#fff',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#e6eef8' } } },
+          scales: {
+            r: {
+              angleLines: { color: '#334155' },
+              grid: { color: '#334155' },
+              pointLabels: { color: '#e6eef8', font: { size: 14 } },
+              ticks: { color: '#e6eef8', beginAtZero: true }
+            }
+          }
+        }
+      });
+    }
+
+  // On load, try to read IRR data from localStorage
+  let irrDataReceived = false;
+  function updateDashboardFromStorage() {
+    const storedIrr = localStorage.getItem('irrValues');
+    if (storedIrr) {
+      try {
+        const irrArray = JSON.parse(storedIrr);
+        if (Array.isArray(irrArray) && irrArray.length) {
+          irrDataReceived = true;
+          renderDashboard(irrArray);
+        }
+      } catch(e) { console.error('Failed to parse IRR data from localStorage', e); }
+    }
+    if (!irrDataReceived) {
+      document.getElementById('irrMetrics').innerHTML = '<li style="color:#e2e8f8;font-size:14px;">Waiting for IRR data...</li>';
+      const ctx = document.getElementById('irrRadarChart').getContext('2d');
+      ctx.clearRect(0,0,400,200);
+    }
+  }
+  updateDashboardFromStorage();
+  // Listen for localStorage changes (auto-update dashboard)
+  window.addEventListener('storage', function(event) {
+    if (event.key === 'irrValues') {
+      updateDashboardFromStorage();
+    }
+  });
+  </script>
+</body>
+</html>

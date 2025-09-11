@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custom Search UI</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="background.css">
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      /* Center horizontally */
+      background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+    }
+
+    /* Top area */
+    .top-bar {
+      width:100%;
+      padding:34px 20px 10px;
+      display:flex;
+      justify-content:center;
+      box-sizing:border-box;
+      position:sticky;
+      top:0;
+      z-index:50;
+      background:linear-gradient(135deg,#6a11cb 0%,#2575fc 100%);
+    }
+
+    .search-shell {
+      width:100%;
+      max-width:800px;
+      background:#fff;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 16px;
+      border-radius:999px;
+      border:1px solid #e2e8f0;
+      box-shadow:0 4px 16px rgba(0,0,0,.12);
+      transition:box-shadow .25s,border-color .25s;
+    }
+    .search-shell:focus-within { box-shadow:0 6px 22px rgba(0,0,0,.18); border-color:#bfdbfe; }
+    .search-shell input { flex:1; border:none; outline:none; font-size:16px; background:transparent; font-family:inherit; }
+    .icon-btn { background:#2575fc; color:#fff; border:none; padding:10px 22px; border-radius:24px; font-size:15px; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 2px 6px rgba(0,0,0,.25); transition:background .25s, transform .15s; }
+    .icon-btn:disabled { background:#9ca3af; cursor:not-allowed; box-shadow:none; }
+    .icon-btn:not(:disabled):hover { background:#1d60cc; }
+    .icon-btn:not(:disabled):active { transform:translateY(1px); }
+
+    .page-wrapper { width:100%; display:flex; flex-direction:column; align-items:center; }
+    .answer-wrapper { width:100%; max-width:900px; padding:0 20px 80px; box-sizing:border-box; }
+    .status-line { margin:10px 0 18px; font-size:12px; font-family:monospace; color:#ffe08a; }
+
+    .answer-card { background:#ffffff; border-radius:18px; padding:22px 26px 28px; box-shadow:0 4px 22px -4px rgba(0,0,0,.25); line-height:1.55; font-size:15px; position:relative; overflow:hidden; }
+    .answer-card h3 { margin:0 0 14px; font-size:14px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:600; }
+    .faded-label { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748b; font-weight:600; }
+    .chips { margin-top:18px; display:flex; flex-wrap:wrap; gap:8px; }
+    .chip { background:#2575fc; color:#fff; border:none; padding:6px 12px; border-radius:24px; font-size:12px; cursor:pointer; line-height:1; display:inline-flex; align-items:center; gap:4px; box-shadow:0 2px 6px rgba(0,0,0,.2); }
+    .chip:hover { background:#1d60cc; }
+    .cite-bar { margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; }
+    .cite { background:#f1f5f9; color:#475569; padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer; border:1px solid #e2e8f0; }
+    .cite.active { background:#2575fc; color:#fff; border-color:#1d60cc; }
+    .citation-detail { margin-top:10px; background:#f8fafc; border:1px solid #e2e8f0; padding:12px 14px; border-radius:10px; font-size:12px; max-height:220px; overflow:auto; }
+    .skeleton { background:linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 37%,#f1f5f9 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; border-radius:6px; }
+    .sk-line { height:14px; margin:6px 0; }
+    @keyframes shimmer { 0% {background-position:100% 0;} 100% {background-position:0 0;} }
+    .empty-hint { font-size:13px; color:#e2e8f0; margin-top:40px; text-align:center; }
+    .error-text { color:#dc2626; font-weight:500; }
+    .badge { position:absolute; top:10px; right:14px; background:#eef2ff; color:#3730a3; font-size:11px; padding:4px 8px; border-radius:14px; font-weight:600; letter-spacing:.5px; }
+    .mini { font-size:11px; opacity:.85; }
+    .ref-block { margin-bottom:14px; }
+    .ref-block pre { white-space:pre-wrap; word-break:break-word; font-size:11px; background:#fff; margin:6px 0 0; padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; }
+  </style>
+</head>
+
+<body>
+  <div class="page-wrapper">
+    <div class="top-bar">
+      <div class="search-shell" id="searchShell">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="searchInput" class="modern-search" placeholder="Ask anything about IRR data, projects, finance..." autocomplete="off" />
+        <button id="askBtn" class="icon-btn" disabled>
+          <span>Ask</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+  <div id="tokenInfo" style="display:none;margin:8px 0 0 0;font-size:12px;color:#64748b;background:#f1f5f9;padding:4px 8px;border-radius:4px;max-width:80%;word-break:break-all;"></div>
+      </div>
+    </div>
+    <div class="answer-wrapper">
+      <div id="tokenStatus" class="status-line">Auth: waiting for login...</div>
+      <div id="answerRegion">
+        <p class="empty-hint">Start typing a question and press Enter or click Ask.</p>
+      </div>
+      <div id="relatedQuestions" class="chips"></div>
+      <div id="citationsPanel"></div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const apiUrl = "https://us-discoveryengine.googleapis.com/v1alpha/projects/19437895168/locations/us/collections/default_collection/engines/z-app_1753360472660/servingConfigs/default_search:answer";
+      // NOTE: Do NOT hardcode a bearer token in production. This is only for quick testing.
+      let bearerToken = "REPLACE_WITH_RUNTIME_TOKEN"; // placeholder
+      // Restore token from localStorage if present
+      const storedToken = localStorage.getItem('searchAuthToken');
+      if(storedToken && storedToken.length > 20){
+        bearerToken = storedToken;
+      }
+    const tokenInfo = document.getElementById('tokenInfo');
+    tokenInfo.textContent = bearerToken && bearerToken !== 'REPLACE_WITH_RUNTIME_TOKEN' ? `Access Token: ${bearerToken}` : 'No access token set.';
+      const input = document.getElementById('searchInput');
+      const btn = document.getElementById('askBtn');
+      const relatedWrap = document.getElementById('relatedQuestions');
+      const tokenStatus = document.getElementById('tokenStatus');
+      const answerRegion = document.getElementById('answerRegion');
+      const citationsPanel = document.getElementById('citationsPanel');
+
+      function setLoading(isLoading){
+        if(isLoading){
+          btn.disabled = true; btn.classList.add('loading');
+          btn.innerHTML = '<span>Loading</span>';
+          answerRegion.innerHTML = `
+            <div class="answer-card">
+              <span class="badge">Generating</span>
+              <div class="sk-line skeleton" style="width:60%"></div>
+              <div class="sk-line skeleton" style="width:85%"></div>
+              <div class="sk-line skeleton" style="width:78%"></div>
+              <div class="sk-line skeleton" style="width:66%"></div>
+              <div class="sk-line skeleton" style="width:40%"></div>
+            </div>`;
+        } else {
+          btn.disabled = false; btn.classList.remove('loading');
+          btn.innerHTML = '<span>Ask</span> <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+        }
+      }
+
+      function tokenAvailable(){
+        return bearerToken && bearerToken !== 'REPLACE_WITH_RUNTIME_TOKEN' && bearerToken.length > 20;
+      }
+
+      function ensureTokenOrWarn(){
+        if(!tokenAvailable()){
+          answerRegion.innerHTML = '<p class="error-text">You must login first. Token not received.</p>';
+          return false;
+        }
+        return true;
+      }
+
+      async function callApi(queryText){
+        if(!ensureTokenOrWarn()) return;
+        if(!queryText){
+          answerRegion.innerHTML = '<p class="error-text">Enter a question.</p>';
+          return;
+        }
+    tokenInfo.textContent = bearerToken && bearerToken !== 'REPLACE_WITH_RUNTIME_TOKEN' ? `Access Token: ${bearerToken}` : 'No access token set.';
+        setLoading(true);
+        relatedWrap.innerHTML = '';
+        citationsPanel.innerHTML = '';
+        try {
+          const payload = {
+            query: { text: queryText, queryId: "" },
+            session: "",
+            relatedQuestionsSpec: { enable: true },
+            answerGenerationSpec: {
+              ignoreAdversarialQuery: true,
+              ignoreNonAnswerSeekingQuery: false,
+              ignoreLowRelevantContent: true,
+              multimodalSpec: {},
+              includeCitations: true,
+              promptSpec: { preamble: "Given the conversation between a user and a helpful assistant and some search results, create a final answer for the assistant. The answer should use all relevant information from the search results, not introduce any additional information, and use exactly the same words as the search results when possible. The assistant's answer should be no more than 50 words. The user is an expert who has an in-depth understanding of the subject matter. The assistant should answer in a technical manner that uses specialized knowledge and terminology when it helps answer the query." },
+              modelSpec: { modelVersion: "stable" }
+            }
+          };
+
+          const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + bearerToken,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          console.log('Raw API response:', data);
+          const answerText = data?.answer?.answerText || '';
+          const refs = data?.answer?.references || [];
+          // Robust IRR extraction for all formats in answerText
+          let irrValues = [];
+          // Match numbers with years: '0.1074 for 6 years', '0.1074 (6 years)', etc.
+          const irrYearRegex = /([0-9.]+)\s*%?\s*(?:for|over)?\s*(\d+)\s*years?|\(([0-9.]+)\s*%?\s*(\d+)\s*years?\)/gi;
+          let yearMatch;
+          while ((yearMatch = irrYearRegex.exec(answerText)) !== null) {
+            if (yearMatch[1] && yearMatch[2]) {
+              irrValues.push({ irr: parseFloat(yearMatch[1]), year: yearMatch[2] });
+            } else if (yearMatch[3] && yearMatch[4]) {
+              irrValues.push({ irr: parseFloat(yearMatch[3]), year: yearMatch[4] });
+            }
+          }
+          // Match numbers with labels: '0.1741 (Base Case)', '0.3654 (Base Project IRR)', etc.
+          const irrLabelRegex = /([0-9.]+)\s*%?\s*\(([^)]+)\)/gi;
+          let labelMatch;
+          while ((labelMatch = irrLabelRegex.exec(answerText)) !== null) {
+            irrValues.push({ irr: parseFloat(labelMatch[1]), label: labelMatch[2].trim() });
+          }
+          // Match plain numbers in a list: '0.1417, 0.1741, 0.3654, ...'
+          const irrListRegex = /([0-9.]+)\s*%?(?=,|\s|$)/g;
+          let listMatch;
+          let listValues = [];
+          while ((listMatch = irrListRegex.exec(answerText)) !== null) {
+            listValues.push(parseFloat(listMatch[1]));
+          }
+          // Add list values that are not already captured by year/label regexes
+          const existing = new Set(irrValues.map(v => v.irr));
+          listValues.forEach(v => {
+            if (!existing.has(v)) irrValues.push({ irr: v });
+          });
+          // Always overwrite localStorage with latest IRR values
+          localStorage.setItem('irrValues', JSON.stringify(irrValues));
+          try {
+            const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
+            if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');
+          } catch(e) { /* silent fail */ }
+          let citeHtml = '';
+          if(refs.length){
+            citeHtml = '<div class="cite-bar">' + refs.map((r,i)=>`<span class="cite" data-cite-index="${i}">Ref ${i+1}</span>`).join('') + '</div>';
+          }
+          if(answerText){
+            answerRegion.innerHTML = `
+              <div class="answer-card">
+                 <span class="badge">Answer</span>
+                 <div class="answer-body">${escapeHtml(answerText)}</div>
+                 ${citeHtml}
+              </div>`;
+          } else {
+            answerRegion.innerHTML = '<p class="error-text">No answer returned.</p>';
+          }
+          // Build citation reference blocks (hidden until clicked)
+          if(refs.length){
+            citationsPanel.innerHTML = '<div id="refBlocks" style="margin-top:18px;"></div>';
+            const refContainer = document.getElementById('refBlocks');
+            refs.forEach((r,i)=>{
+              const content = r?.chunkInfo?.content || '(no excerpt)';
+              const uri = r?.chunkInfo?.documentMetadata?.uri || '';
+              const title = r?.chunkInfo?.documentMetadata?.title || 'Source';
+              const block = document.createElement('div');
+              block.className = 'ref-block';
+              block.style.display = 'none';
+              block.id = 'ref-'+i;
+              block.innerHTML = `<div class="faded-label">REF ${i+1}: ${escapeHtml(title)}</div><pre>${escapeHtml(content.substring(0,1600))}${content.length>1600?'...':''}</pre>${uri?`<div class="mini">URI: ${escapeHtml(uri)}</div>`:''}`;
+              refContainer.appendChild(block);
+            });
+            // Citation click handler
+            answerRegion.querySelectorAll('.cite').forEach(el => {
+              el.addEventListener('click', ()=>{
+                const idx = el.getAttribute('data-cite-index');
+                const target = document.getElementById('ref-'+idx);
+                const active = el.classList.contains('active');
+                // toggle
+                answerRegion.querySelectorAll('.cite').forEach(c=>c.classList.remove('active'));
+                document.querySelectorAll('.ref-block').forEach(b=> b.style.display='none');
+                if(!active){
+                  el.classList.add('active');
+                  target.style.display='block';
+                }
+              });
+            });
+          }
+          // Related questions chips
+          if(Array.isArray(data?.answer?.relatedQuestions)){
+            relatedWrap.innerHTML = '';
+            data.answer.relatedQuestions.forEach(q => {
+              const chip = document.createElement('button');
+              chip.className='chip';
+              chip.textContent=q;
+              chip.onclick=()=>{ input.value=q; callApi(q); };
+              relatedWrap.appendChild(chip);
+            });
+          }
+        } catch (err) {
+          console.error('API error:', err);
+          answerRegion.innerHTML = '<p class="error-text">Error fetching answer.</p>';
+        } finally {
+          setLoading(false);
+        }
+      }
+      btn.addEventListener('click', () => callApi(input.value.trim()));
+      input.addEventListener('keydown', (e) => { if(e.key === 'Enter') callApi(input.value.trim()); });
+
+      // Expose a way to inject token dynamically from parent (index.html) via postMessage
+      window.addEventListener('message', (evt) => {
+        if(!evt.data) return;
+        if(evt.data.type === 'googleAccessToken'){
+          bearerToken = evt.data.token;
+          localStorage.setItem('searchAuthToken', bearerToken);
+          console.log('Access token updated for API calls');
+          tokenStatus.textContent = 'Auth: token received';
+          btn.disabled = false;
+        } else if(evt.data.type === 'firebaseLogin') {
+          // Firebase ID token received (not directly usable for Discovery Engine REST)
+          tokenStatus.textContent = 'Auth: firebase session active (waiting access token)';
+        }
+      });
+
+      // Safety: after 5s if no token, remind user
+      setTimeout(() => {
+        if(!tokenAvailable()){
+          tokenStatus.textContent = 'Auth: still waiting for Google access token. Please login again.';
+        }
+      }, 5000);
+
+      // Utility to escape HTML
+      function escapeHtml(str){
+        return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+      }
+    })();
+  </script>
+ 
+</body>
+
+</html>

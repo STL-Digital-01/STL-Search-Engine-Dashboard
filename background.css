@@ -1,0 +1,30 @@
+/* Background Styles */
+body {
+    /* Gradient background for the whole page */
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #667eea 100%);
+    background-size: 400% 400%;
+    animation: gradientShift 15s ease infinite;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    margin: 0;
+}
+
+/* Smooth gradient animation */
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* Optional overlay to highlight card */
+
+
+/* Optional subtle background for the card itself */
+.container {
+    background-color: rgba(240, 242, 245, 0.85);
+ /* semi-transparent white */
+ 
+}

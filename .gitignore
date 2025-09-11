@@ -1,0 +1,43 @@
+# Node.js
+node_modules/
+.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Logs
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+
+# Build output
+dist/
+build/
+
+# Misc
+*.swp
+*.swo
+
+# Ignore tokens and secrets
+*.secret
+*.token
+
+# Ignore coverage
+coverage/
+
+# Ignore local environment
+.env.local
+.env.*.local
+
+# Ignore package-lock
+package-lock.json
+yarn.lock

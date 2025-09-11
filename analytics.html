@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="background.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+      color: white;
+    }
+
+    /* Navigation Bar */
+    .navbar {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 40px;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .navbar .logo {
+      font-size: 22px;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    .nav-buttons {
+      display: flex;
+      gap: 20px;
+    }
+
+    .nav-buttons button {
+      background: white;
+      color: #2575fc;
+      border: none;
+      padding: 10px 20px;
+      font-size: 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.3s ease;
+    }
+
+    .nav-buttons button:hover {
+      background: #2575fc;
+      color: white;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Page content placeholder */
+    .content {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 24px;
+      font-weight: 500;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Navigation Bar -->
+  <div class="navbar">
+    <div class="logo">📊 Analytics Pro</div>
+    <div class="nav-buttons">
+      <button onclick="goTo('dashboard.html')">Dashboard</button>
+      <button onclick="goTo('chart.html')">Chart</button>
+      <button onclick="goTo('reports.html')">Reports</button>
+    </div>
+  </div>
+
+  <!-- Page Content -->
+  <div class="content">
+    Welcome to Analytics Pro 🚀
+  </div>
+
+  <script>
+    function goTo(page) {
+      window.location.href = page;
+    }
+  </script>
+</body>
+</html>
