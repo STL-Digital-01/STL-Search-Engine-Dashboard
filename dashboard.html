@@ -174,6 +174,29 @@
       });
     }
 
+    // Assume irrValues is loaded from localStorage
+    function renderIRRValues() {
+      const irrValues = JSON.parse(localStorage.getItem('irrValues') || '[]');
+      const container = document.getElementById('irr-list');
+      if (!container) return;
+      container.innerHTML = '';
+      let count = 1;
+      irrValues.forEach(v => {
+        let label = '';
+        if (v.year) {
+          label = `Year ${v.year}: ${v.irr}%`;
+        } else if (v.label) {
+          label = `${v.label}: ${v.irr}%`;
+        } else {
+          label = `Value ${count}: ${v.irr}%`;
+          count++;
+        }
+        const div = document.createElement('div');
+        div.textContent = label;
+        container.appendChild(div);
+      });
+    }
+
   // On load, try to read IRR data from localStorage
   let irrDataReceived = false;
   function updateDashboardFromStorage() {
@@ -198,8 +221,10 @@
   window.addEventListener('storage', function(event) {
     if (event.key === 'irrValues') {
       updateDashboardFromStorage();
+      renderIRRValues();
     }
   });
+  document.addEventListener('DOMContentLoaded', renderIRRValues);
   </script>
 </body>
 </html>
