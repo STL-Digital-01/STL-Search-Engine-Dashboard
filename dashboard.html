@@ -8,29 +8,102 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
-      background: linear-gradient(180deg,#0f172a 0%, #071129 55%);
+      background: linear-gradient(135deg, #1e293b 0%, #6366f1 100%);
       color: #e6eef8;
-      font-family: sans-serif;
+      font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
       min-height: 100vh;
       padding: 2rem;
     }
     .glass {
-      background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-      backdrop-filter: blur(6px);
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 0.75rem;
-      padding: 1rem;
+      background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04));
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 1.25rem;
+      padding: 1.5rem;
+      box-shadow: 0 8px 32px rgba(60,60,120,0.18);
+      transition: box-shadow .3s;
+    }
+    .glass:hover {
+      box-shadow: 0 12px 40px rgba(60,60,120,0.28);
     }
     .metric-list li {
+      margin-bottom: 0.7rem;
+      font-size: 1.15rem;
+      font-weight: 600;
+      background: linear-gradient(90deg,#6366f1 0%,#60a5fa 100%);
+      color: #fff;
+      border-radius: 0.75rem;
+      padding: 0.5rem 1.2rem;
+      box-shadow: 0 2px 8px rgba(60,60,120,0.10);
+      display: inline-block;
+      margin-right: 0.5rem;
+      animation: fadeInMetric 0.7s;
+    }
+    @keyframes fadeInMetric {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .metric-badge {
+      display: inline-block;
+      background: linear-gradient(90deg,#f472b6 0%,#facc15 100%);
+      color: #222;
+      border-radius: 0.75rem;
+      padding: 0.3rem 1rem;
+      font-size: 1rem;
+      font-weight: 700;
+      margin-right: 0.5rem;
+      box-shadow: 0 2px 8px rgba(60,60,120,0.10);
+    }
+    .summary-table th, .summary-table td {
+      background: rgba(255,255,255,0.08);
+      color: #e6eef8;
+      border-radius: 0.5rem;
+      font-size: 1rem;
+      padding: 0.7rem 1.2rem;
+    }
+    .summary-table th {
+      font-weight: 700;
+      background: linear-gradient(90deg,#6366f1 0%,#60a5fa 100%);
+      color: #fff;
+    }
+    .summary-table tr {
+      transition: background .2s;
+    }
+    .summary-table tr:hover {
+      background: rgba(99,102,241,0.10);
+    }
+    .chart-area {
+      background: linear-gradient(135deg,#6366f1 0%,#60a5fa 100%);
+      border-radius: 1.25rem;
+      box-shadow: 0 4px 18px rgba(60,60,120,0.12);
+      padding: 1.5rem;
+      margin-top: 2rem;
+      animation: fadeInMetric 1s;
+    }
+    .dashboard-title {
+      font-size: 2.7rem;
+      font-weight: 900;
+      background: linear-gradient(90deg,#6366f1 0%,#f472b6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
       margin-bottom: 0.5rem;
+      letter-spacing: 1px;
+      text-align: center;
+    }
+    .dashboard-subtitle {
+      font-size: 1.3rem;
+      color: #facc15;
+      text-align: center;
+      margin-bottom: 2rem;
+      font-weight: 600;
     }
   </style>
 </head>
 <body>
   <main class="max-w-3xl mx-auto space-y-6">
     <header class="text-center">
-      <h1 id="dashboardTitle" class="text-3xl font-bold">Dashboard</h1>
-      <p id="dashboardSubtitle" class="text-slate-300 mt-1">IRR data overview</p>
+      <h1 id="dashboardTitle" class="dashboard-title">Dashboard</h1>
+      <p id="dashboardSubtitle" class="dashboard-subtitle">IRR data overview</p>
     </header>
 
     <section class="glass">
@@ -42,7 +115,7 @@
       </div>
       <div class="mt-4">
         <h3 class="text-sm text-slate-300 mb-2">Summary Table</h3>
-        <table class="w-full text-left border-collapse border border-white/20" id="irrTable">
+        <table class="w-full text-left border-collapse border border-white/20 summary-table" id="irrTable">
           <thead>
             <tr>
               <th class="border border-white/20 px-4 py-2">Label/Year</th>
@@ -94,8 +167,7 @@
         let value = (typeof d === 'object' && d !== null) ? (d.value || d.irr) : d;
         let num = parseFloat(value);
         let isValid = value !== null && value !== undefined && !isNaN(num);
-        if (isValid) validIrrs.push(num);
-        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : 'Value')) : 'Value';
+        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : 'IRR')) : 'IRR';
         return `<li>${label}: ${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</li>`;
       }).join('');
 
