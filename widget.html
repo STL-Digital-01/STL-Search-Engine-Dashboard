@@ -191,39 +191,20 @@
           console.log('Raw API response:', data);
           const answerText = data?.answer?.answerText || '';
           const refs = data?.answer?.references || [];
-          // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates
+          // IRR extraction: handle comma-separated lists and plain numbers, plus percent values
           let irrValues = [];
           const seenIRR = new Set();
-          // 1. Year-based IRRs: '0.1514 for 2 years', '0.1514% (2 years)', etc.
-          const irrForYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*for\s*(\d+) years?/gi;
-          let forYearMatch;
-          while ((forYearMatch = irrForYearRegex.exec(answerText)) !== null) {
-            const key = forYearMatch[1];
-            if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(forYearMatch[1]), year: forYearMatch[2], raw: forYearMatch[0] });
-              seenIRR.add(key);
+          // 1. IRR percent values: 'IRR is 21%', 'IRR: 21%', etc.
+          const irrPercentRegex = /IRR[^\d]*([0-9]+\.?[0-9]*)%/gi;
+          let percentMatch;
+          while ((percentMatch = irrPercentRegex.exec(answerText)) !== null) {
+            const value = parseFloat(percentMatch[1]);
+            if (!seenIRR.has(value)) {
+              irrValues.push({ irr: value, raw: percentMatch[0] });
+              seenIRR.add(value);
             }
           }
-          const irrYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*\((\d+) years?\)/gi;
-          let yearMatch;
-          while ((yearMatch = irrYearRegex.exec(answerText)) !== null) {
-            const key = yearMatch[1];
-            if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(yearMatch[1]), year: yearMatch[2], raw: yearMatch[0] });
-              seenIRR.add(key);
-            }
-          }
-          // 2. IRR with labels: '0.1160% (Base IRR)', '0.1417 (Project IRR)', etc.
-          const irrLabelRegex = /([0-9]+\.[0-9]+)\s*%?\s*\(([^)]+IRR)\)/gi;
-          let labelMatch;
-          while ((labelMatch = irrLabelRegex.exec(answerText)) !== null) {
-            const key = labelMatch[1];
-            if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(labelMatch[1]), label: labelMatch[2].trim(), raw: labelMatch[0] });
-              seenIRR.add(key);
-            }
-          }
-          // 3. Comma-separated IRR lists: 'It is 0.732..., 0.623..., ...'
+          // 2. Comma-separated IRR lists: 'It is 0.732..., 0.623..., ...'
           const irrCommaListRegex = /(?:is|are|include|varies\.|values?\s*[:=])\s*([0-9.,\sand]+)/gi;
           let commaListMatch;
           while ((commaListMatch = irrCommaListRegex.exec(answerText)) !== null) {
@@ -232,29 +213,116 @@
             const numbers = cleaned.match(/([0-9]+\.[0-9]+|[0-9]+)/g);
             if (numbers) {
               numbers.forEach(n => {
-                if (!seenIRR.has(n)) {
-                  irrValues.push({ irr: parseFloat(n), raw: n });
-                  seenIRR.add(n);
+                const value = parseFloat(n);
+                if (!seenIRR.has(value)) {
+                  irrValues.push({ irr: value, raw: n });
+                  seenIRR.add(value);
                 }
               });
             }
           }
-          // 4. IRR percent values: '0.1741%', etc. (not associated with years/labels)
-          const irrPercentRegex = /([0-9]+\.[0-9]+)\s*%/g;
-          let percentMatch;
-          while ((percentMatch = irrPercentRegex.exec(answerText)) !== null) {
-            const key = percentMatch[1];
-            if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(percentMatch[1]), raw: percentMatch[0] });
-              seenIRR.add(key);
+          // 3. Other percent values: '21%', etc. (ignore payback)
+          const otherPercentRegex = /([0-9]+\.?[0-9]*)%/g;
+          let otherMatch;
+          while ((otherMatch = otherPercentRegex.exec(answerText)) !== null) {
+            const value = parseFloat(otherMatch[1]);
+            // Ignore if preceded by 'Payback'
+            const before = answerText.slice(Math.max(0, otherMatch.index - 10), otherMatch.index).toLowerCase();
+            if (!before.includes('payback') && !seenIRR.has(value)) {
+              irrValues.push({ irr: value, raw: otherMatch[0] });
+              seenIRR.add(value);
             }
           }
+          // New scenario: extract 'base case IRR of X% over Y years' and similar phrases
+          const irrBaseCaseRegex = /base case IRR of ([0-9]+\.[0-9]+)%/gi;
+          let baseCaseMatch;
+          while ((baseCaseMatch = irrBaseCaseRegex.exec(answerText)) !== null) {
+            const value = parseFloat(baseCaseMatch[1]);
+            if (!seenIRR.has(value)) {
+              irrValues.push({ irr: value, raw: baseCaseMatch[0] });
+              seenIRR.add(value);
+            }
+          }
+          // Extra: label IRR values with their year if found in 'X% for Y years' or 'X% over Y years'
+          const irrYearValueRegex = /([0-9]+\.[0-9]+)%?\s*(?:for|over)\s*(\d+) years?/gi;
+          let yearValueMatch;
+          while ((yearValueMatch = irrYearValueRegex.exec(answerText)) !== null) {
+            const value = parseFloat(yearValueMatch[1]);
+            const year = yearValueMatch[2];
+            // Only add if not already present with year
+            if (!irrValues.some(v => v.irr === value && v.year === year)) {
+              irrValues.push({ irr: value, year: year, raw: yearValueMatch[0] });
+            }
+          }
+          // Extra scenario: handle 'over a X-year period, the IRR ranged from Y% to Z%'
+          const irrRangeYearRegex = /over a (\d+)-year period, the IRR ranged from ([0-9]+\.[0-9]+)% to ([0-9]+\.[0-9]+)%/gi;
+          let rangeYearMatch;
+          while ((rangeYearMatch = irrRangeYearRegex.exec(answerText)) !== null) {
+            const year = rangeYearMatch[1];
+            const from = parseFloat(rangeYearMatch[2]);
+            const to = parseFloat(rangeYearMatch[3]);
+            irrValues.push({ irr: `${from}% to ${to}%`, year: year, raw: rangeYearMatch[0], isRange: true });
+          }
+          // Extract IRR values in answer order, including ranges and plain values
+          let orderedIrrValues = [];
+          // Match range scenario first
+          const rangePattern = /over a (\d+)-year period, the IRR ranged from ([\d.]+%?) to ([\d.]+%?)/gi;
+          let rangeMatch;
+          while ((rangeMatch = rangePattern.exec(answerText)) !== null) {
+            orderedIrrValues.push({ value: `${rangeMatch[2]} to ${rangeMatch[3]}`, label: `Year ${rangeMatch[1]}` });
+          }
+          // Match 'Value X: <value>'
+          const valuePattern = /Value \d+:\s*([\d.]+%?)/gi;
+          let valueMatch;
+          while ((valueMatch = valuePattern.exec(answerText)) !== null) {
+            orderedIrrValues.push({ value: valueMatch[1], label: 'Value' });
+          }
+          // Match plain IRR values (with or without %), including decimals and values > 1
+          const plainPattern = /\b(\d{1,3}\.\d+%?)\b/g;
+          let plainMatch;
+          while ((plainMatch = plainPattern.exec(answerText)) !== null) {
+            // Avoid duplicates from previous matches
+            if (!orderedIrrValues.some(v => v.value === plainMatch[1])) {
+              orderedIrrValues.push({ value: plainMatch[1], label: 'Value' });
+            }
+          }
+          // Merge all extracted IRR values before filtering and storing
+          let allExtractedIRR = [];
+          // Add percent values
+          allExtractedIRR = allExtractedIRR.concat(irrValues);
+          // Add ordered values from answer order
+          allExtractedIRR = allExtractedIRR.concat(orderedIrrValues);
+          // Remove duplicates by value and label, preserve answer order
+          const seenPairs = new Set();
+          irrValues = irrValues.filter(v => {
+            const valLabel = `${v.value || v.irr}_${v.label}`;
+            if (seenPairs.has(valLabel)) return false;
+            seenPairs.add(valLabel);
+            return true;
+          });
+          // Professional labeling: IRR, Year, Value, Scenario
+          irrValues = irrValues.map((v) => {
+            if (v.year) {
+              return { ...v, label: `Year ${v.year}` };
+            }
+            if (v.label) {
+              return { ...v, label: v.label };
+            }
+            // If value matches a pattern like 'X% over Y years', extract year and relabel
+            if (v.value && /([\d.]+%?) over (\d+) years?/.test(v.value)) {
+              const match = v.value.match(/([\d.]+%?) over (\d+) years?/);
+              return { value: match[1], label: `Year ${match[2]}` };
+            }
+            // Default: label as 'IRR' for professional display
+            return { ...v, label: 'IRR' };
+          });
           // Overwrite localStorage with IRR values in answer order, no duplicates
           localStorage.setItem('irrValues', JSON.stringify(irrValues));
           try {
             const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
             if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');
           } catch(e) { /* silent fail */ }
+          window.dispatchEvent(new StorageEvent('storage', { key: 'irrValues', newValue: JSON.stringify(irrValues) }));
           let citeHtml = '';
           if(refs.length){
             citeHtml = '<div class="cite-bar">' + refs.map((r,i)=>`<span class="cite" data-cite-index="${i}">Ref ${i+1}</span>`).join('') + '</div>';
@@ -311,6 +379,21 @@
               relatedWrap.appendChild(chip);
             });
           }
+          // Extract Capex/Budget values (e.g., Rs 895 Cr)
+          const capexPattern = /(Rs\s*[\d,.]+\s*Cr)/gi;
+          let capexMatch = capexPattern.exec(answerText);
+          let capexValue = capexMatch ? capexMatch[1] : null;
+
+          // Extract vendor names (e.g., Larsen & Toubro)
+          const vendorPattern = /(Larsen & Toubro|L&T|Vendor: [\w &]+)/gi;
+          let vendorMatch = vendorPattern.exec(answerText);
+          let vendorName = vendorMatch ? vendorMatch[0] : null;
+
+          // Store extra metrics in localStorage for dashboard
+          const extraMetrics = {};
+          if (capexValue) extraMetrics.capex = capexValue;
+          if (vendorName) extraMetrics.vendor = vendorName;
+          localStorage.setItem('extraMetrics', JSON.stringify(extraMetrics));
         } catch (err) {
           console.error('API error:', err);
           answerRegion.innerHTML = '<p class="error-text">Error fetching answer.</p>';

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>STL IRR Dashboard</title>
+  <title>STL  Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -29,7 +29,7 @@
 <body>
   <main class="max-w-3xl mx-auto space-y-6">
     <header class="text-center">
-      <h1 id="dashboardTitle" class="text-3xl font-bold">STL IRR Dashboard</h1>
+      <h1 id="dashboardTitle" class="text-3xl font-bold">Dashboard</h1>
       <p id="dashboardSubtitle" class="text-slate-300 mt-1">IRR data overview</p>
     </header>
 
@@ -72,7 +72,7 @@
       // Dynamic title/subtitle based on IRR data
       const titleEl = document.getElementById('dashboardTitle');
       const subtitleEl = document.getElementById('dashboardSubtitle');
-      let title = 'STL IRR Dashboard';
+      let title = 'Dashboard';
       let subtitle = 'IRR data overview';
       if (irrData.some(d => d.label && d.label.toLowerCase().includes('lead silver recovery'))) {
         title = 'Lead Silver Recovery Project IRR';
@@ -90,13 +90,13 @@
       // Filter and map IRR values
       const irrMetrics = document.getElementById('irrMetrics');
       const validIrrs = [];
-      irrMetrics.innerHTML = irrData.map((d, i) => {
-        let value = (typeof d === 'object' && d !== null) ? d.irr : d;
+      irrMetrics.innerHTML = irrData.map((d) => {
+        let value = (typeof d === 'object' && d !== null) ? (d.value || d.irr) : d;
         let num = parseFloat(value);
         let isValid = value !== null && value !== undefined && !isNaN(num);
         if (isValid) validIrrs.push(num);
-        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : `Value ${i+1}`)) : `Value ${i+1}`;
-        return `<li>${label}: ${isValid ? num + '%' : '<span style="color:#f87171">(missing)</span>'}</li>`;
+        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : 'Value')) : 'Value';
+        return `<li>${label}: ${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</li>`;
       }).join('');
 
       // Extra Metrics
@@ -108,31 +108,48 @@
         const first = validIrrs[0], last = validIrrs[validIrrs.length-1];
         growth = (((last-first)/Math.abs(first))*100).toFixed(2) + '%';
       }
-      document.getElementById('extraMetrics').innerHTML = `
+      // Read extra metrics from localStorage
+      let extraMetricsHtml = `
         <li>Average IRR: <span class="text-yellow-300">${avg !== '-' ? avg + '%' : '-'}</span></li>
         <li>Highest IRR: <span class="text-green-300">${max !== '-' ? max + '%' : '-'}</span></li>
         <li>Lowest IRR: <span class="text-red-300">${min !== '-' ? min + '%' : '-'}</span></li>
         <li>Growth Rate: <span class="text-blue-300">${growth}</span></li>
       `;
+      try {
+        const extraMetrics = JSON.parse(localStorage.getItem('extraMetrics') || '{}');
+        if (extraMetrics.capex) {
+          extraMetricsHtml += `<li>Capex/Budget: <span class='text-pink-300'>${extraMetrics.capex}</span></li>`;
+        }
+        if (extraMetrics.vendor) {
+          extraMetricsHtml += `<li>Vendor: <span class='text-green-300'>${extraMetrics.vendor}</span></li>`;
+        }
+        if (extraMetrics.scenario) {
+          extraMetricsHtml += `<li>Scenario: <span class='text-blue-300'>${extraMetrics.scenario}</span></li>`;
+        }
+        if (extraMetrics.baseCase) {
+          extraMetricsHtml += `<li>Base Case IRR: <span class='text-yellow-300'>${extraMetrics.baseCase}</span></li>`;
+        }
+      } catch(e) {}
+      document.getElementById('extraMetrics').innerHTML = extraMetricsHtml;
 
       // Summary Table
-      const labels = irrData.map((d, i) => {
+      const labels = irrData.map((d) => {
         if (typeof d === 'object' && d !== null) {
           if (d.year) return `Year ${d.year}`;
           if (d.label) return d.label;
-          return `Value ${i+1}`;
+          return 'Value';
         } else {
-          return `Value ${i+1}`;
+          return 'Value';
         }
       });
       const tbody = document.getElementById('irrTable').querySelector('tbody');
       tbody.innerHTML = '';
       irrData.forEach((d, i) => {
-        let value = (typeof d === 'object' && d !== null) ? d.irr : d;
+        let value = (typeof d === 'object' && d !== null) ? (d.value || d.irr) : d;
         let num = parseFloat(value);
         let isValid = value !== null && value !== undefined && !isNaN(num);
         let label = labels[i];
-        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2">${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</td></tr>`;
+        tbody.innerHTML += `<tr><td class=\"border border-white/20 px-4 py-2\">${label}</td><td class=\"border border-white/20 px-4 py-2\">${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</td></tr>`;
       });
 
       // Last Updated Timestamp
