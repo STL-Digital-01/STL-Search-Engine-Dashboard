@@ -62,6 +62,14 @@
         <h3 class="text-lg mb-3">IRR Radar Chart</h3>
         <canvas id="irrRadarChart"></canvas>
       </div>
+      <div class="glass card col-span-1 animate-fadein">
+        <h3 class="text-lg mb-3">IRR Line Chart</h3>
+        <canvas id="irrLineChart"></canvas>
+      </div>
+      <div class="glass card col-span-1 animate-fadein">
+        <h3 class="text-lg mb-3">IRR Donut Chart</h3>
+        <canvas id="irrDonutChart"></canvas>
+      </div>
     </section>
 
     <section id="vendorSection" class="mt-8">
@@ -71,7 +79,7 @@
 
   <script>
 
-    let radarChart;
+  let radarChart, lineChart, donutChart;
     const colors = ["#60a5fa","#f472b6","#34d399","#facc15","#a78bfa","#fb7185","#38bdf8","#fbbf24","#a3e635","#f87171"];
     function renderDashboard(irrData) {
       // Dynamic title/subtitle
@@ -171,6 +179,60 @@
               ticks: { color: '#e6eef8', beginAtZero: true }
             }
           }
+        }
+      });
+
+      // Line Chart
+      if(lineChart) lineChart.destroy();
+      lineChart = new Chart(document.getElementById('irrLineChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'IRR (%)',
+            data: labels.map((_, i) => {
+              let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
+              let num = parseFloat(value);
+              return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
+            }),
+            fill: false,
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52,211,153,0.2)',
+            tension: 0.3,
+            pointBackgroundColor: colors,
+            pointBorderColor: '#fff',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#e6eef8' } } },
+          scales: {
+            x: { ticks: { color: '#e6eef8' }, grid: { color: '#334155' } },
+            y: { ticks: { color: '#e6eef8' }, grid: { color: '#334155' }, beginAtZero: true }
+          }
+        }
+      });
+
+      // Donut Chart
+      if(donutChart) donutChart.destroy();
+      donutChart = new Chart(document.getElementById('irrDonutChart'), {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            label: 'IRR (%)',
+            data: labels.map((_, i) => {
+              let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
+              let num = parseFloat(value);
+              return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
+            }),
+            backgroundColor: colors,
+            borderColor: '#fff',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#e6eef8' } } }
         }
       });
 

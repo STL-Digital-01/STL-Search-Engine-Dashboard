@@ -198,9 +198,9 @@
           const irrForYearRegex = /([0-9]+\.[0-9]+%?)\s*for\s*(\d+) years?/gi;
           let forYearMatch;
           while ((forYearMatch = irrForYearRegex.exec(answerText)) !== null) {
-            const key = forYearMatch[1];
+            const key = forYearMatch[1] + '_year_' + forYearMatch[2];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: forYearMatch[1], year: forYearMatch[2], raw: forYearMatch[0] });
+              irrValues.push({ irr: forYearMatch[1], year: forYearMatch[2], label: `Year ${forYearMatch[2]}`, raw: forYearMatch[0] });
               seenIRR.add(key);
             }
           }
@@ -246,6 +246,16 @@
             const key = percentMatch[0];
             if (!seenIRR.has(key)) {
               irrValues.push({ irr: percentMatch[0], raw: percentMatch[0] });
+              seenIRR.add(key);
+            }
+          }
+          // 5. Standalone decimal IRR values (not percent, not year, not label)
+          const irrDecimalRegex = /(?<![\d%])([0-9]+\.[0-9]+)(?![\d%])/g;
+          let decimalMatch;
+          while ((decimalMatch = irrDecimalRegex.exec(answerText)) !== null) {
+            const key = decimalMatch[1];
+            if (!seenIRR.has(key)) {
+              irrValues.push({ irr: key, raw: key });
               seenIRR.add(key);
             }
           }
