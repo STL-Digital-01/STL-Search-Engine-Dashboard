@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>STL IRR Dashboard</title>
+  <title> Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -29,7 +29,7 @@
 <body>
   <main class="max-w-5xl mx-auto space-y-8">
     <header class="text-center">
-  <h1 id="dashboardTitle" class="text-4xl font-bold tracking-tight transition-all duration-300">STL IRR Dashboard</h1>
+  <h1 id="dashboardTitle" class="text-4xl font-bold tracking-tight transition-all duration-300"> Dashboard</h1>
   <p id="dashboardSubtitle" class="text-slate-300 mt-2 text-lg">IRR data overview</p>
     </header>
 
@@ -77,7 +77,7 @@
       // Dynamic title/subtitle
       const titleEl = document.getElementById('dashboardTitle');
       const subtitleEl = document.getElementById('dashboardSubtitle');
-      let title = 'STL IRR Dashboard';
+      let title = 'Dashboard';
       let subtitle = 'IRR data overview';
       if (irrData.some(d => d.label && d.label.toLowerCase().includes('lead silver recovery'))) {
         title = 'Lead Silver Recovery Project IRR';
@@ -96,11 +96,9 @@
       const irrMetricCards = document.getElementById('irrMetricCards');
       irrMetricCards.innerHTML = irrData.map((d, i) => {
         let value = (typeof d === 'object' && d !== null) ? d.irr : d;
-        let num = parseFloat(value);
-        let isValid = value !== null && value !== undefined && !isNaN(num);
         let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : `Value ${i+1}`)) : `Value ${i+1}`;
         let icon = '<span class="metric-icon">📈</span>';
-        return `<div class="metric-card animate-fadein">${icon}<div><div>${label}</div><div>${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</div></div></div>`;
+        return `<div class="metric-card animate-fadein">${icon}<div><div>${label}</div><div>${value}</div></div></div>`;
       }).join('');
 
       // Extra Metrics as cards
@@ -134,13 +132,8 @@
       tbody.innerHTML = '';
       irrData.forEach((d, i) => {
         let value = (typeof d === 'object' && d !== null) ? d.irr : d;
-        let num = parseFloat(value);
-        let isValid = value !== null && value !== undefined && !isNaN(num);
         let label = labels[i];
-        let highlight = '';
-        if (isValid && num === Math.max(...validIrrs)) highlight = 'bg-green-900 text-green-300 font-bold';
-        if (isValid && num === Math.min(...validIrrs)) highlight = 'bg-red-900 text-red-300 font-bold';
-        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2 ${highlight}">${isValid ? num + '%' : '<span style=\"color:#f87171\">(missing)</span>'}</td></tr>`;
+        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2">${value}</td></tr>`;
       });
 
       // Last Updated Timestamp

@@ -195,45 +195,45 @@
           let irrValues = [];
           const seenIRR = new Set();
           // 1. Year-based IRRs: '0.1514 for 2 years', '0.1514% (2 years)', etc.
-          const irrForYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*for\s*(\d+) years?/gi;
+          const irrForYearRegex = /([0-9]+\.[0-9]+%?)\s*for\s*(\d+) years?/gi;
           let forYearMatch;
           while ((forYearMatch = irrForYearRegex.exec(answerText)) !== null) {
             const key = forYearMatch[1];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(forYearMatch[1]), year: forYearMatch[2], raw: forYearMatch[0] });
+              irrValues.push({ irr: forYearMatch[1], year: forYearMatch[2], raw: forYearMatch[0] });
               seenIRR.add(key);
             }
           }
-          const irrYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*\((\d+) years?\)/gi;
+          const irrYearRegex = /([0-9]+\.[0-9]+%?)\s*\((\d+) years?\)/gi;
           let yearMatch;
           while ((yearMatch = irrYearRegex.exec(answerText)) !== null) {
             const key = yearMatch[1];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(yearMatch[1]), year: yearMatch[2], raw: yearMatch[0] });
+              irrValues.push({ irr: yearMatch[1], year: yearMatch[2], raw: yearMatch[0] });
               seenIRR.add(key);
             }
           }
           // 2. IRR with labels: '0.1160% (Base IRR)', '0.1417 (Project IRR)', etc.
-          const irrLabelRegex = /([0-9]+\.[0-9]+)\s*%?\s*\(([^)]+IRR)\)/gi;
+          const irrLabelRegex = /([0-9]+\.[0-9]+%?)\s*\(([^)]+IRR)\)/gi;
           let labelMatch;
           while ((labelMatch = irrLabelRegex.exec(answerText)) !== null) {
             const key = labelMatch[1];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(labelMatch[1]), label: labelMatch[2].trim(), raw: labelMatch[0] });
+              irrValues.push({ irr: labelMatch[1], label: labelMatch[2].trim(), raw: labelMatch[0] });
               seenIRR.add(key);
             }
           }
           // 3. Comma-separated IRR lists: 'It is 0.732..., 0.623..., ...'
-          const irrCommaListRegex = /(?:is|are|include|varies\.|values?\s*[:=])\s*([0-9.,\sand]+)/gi;
+          const irrCommaListRegex = /(?:is|are|include|varies\.|values?\s*[:=])\s*([0-9.,\sand%]+)/gi;
           let commaListMatch;
           while ((commaListMatch = irrCommaListRegex.exec(answerText)) !== null) {
             // Replace 'and' with comma, then split
             const cleaned = commaListMatch[1].replace(/\band\b/gi, ',');
-            const numbers = cleaned.match(/([0-9]+\.[0-9]+|[0-9]+)/g);
+            const numbers = cleaned.match(/([0-9]+\.[0-9]+%?|[0-9]+%?)/g);
             if (numbers) {
               numbers.forEach(n => {
                 if (!seenIRR.has(n)) {
-                  irrValues.push({ irr: parseFloat(n), raw: n });
+                  irrValues.push({ irr: n, raw: n });
                   seenIRR.add(n);
                 }
               });
@@ -243,9 +243,9 @@
           const irrPercentRegex = /([0-9]+\.[0-9]+)\s*%/g;
           let percentMatch;
           while ((percentMatch = irrPercentRegex.exec(answerText)) !== null) {
-            const key = percentMatch[1];
+            const key = percentMatch[0];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(percentMatch[1]), raw: percentMatch[0] });
+              irrValues.push({ irr: percentMatch[0], raw: percentMatch[0] });
               seenIRR.add(key);
             }
           }
