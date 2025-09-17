@@ -195,45 +195,45 @@
           let irrValues = [];
           const seenIRR = new Set();
           // 1. Year-based IRRs: '0.1514 for 2 years', '0.1514% (2 years)', etc.
-          const irrForYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*for\s*(\d+) years?/gi;
+          const irrForYearRegex = /([0-9]+\.[0-9]+%?)\s*for\s*(\d+) years?/gi;
           let forYearMatch;
           while ((forYearMatch = irrForYearRegex.exec(answerText)) !== null) {
-            const key = forYearMatch[1];
+            const key = forYearMatch[1] + '_year_' + forYearMatch[2];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(forYearMatch[1]), year: forYearMatch[2], raw: forYearMatch[0] });
+              irrValues.push({ irr: forYearMatch[1], year: forYearMatch[2], label: `Year ${forYearMatch[2]}`, raw: forYearMatch[0] });
               seenIRR.add(key);
             }
           }
-          const irrYearRegex = /([0-9]+\.[0-9]+)\s*%?\s*\((\d+) years?\)/gi;
+          const irrYearRegex = /([0-9]+\.[0-9]+%?)\s*\((\d+) years?\)/gi;
           let yearMatch;
           while ((yearMatch = irrYearRegex.exec(answerText)) !== null) {
             const key = yearMatch[1];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(yearMatch[1]), year: yearMatch[2], raw: yearMatch[0] });
+              irrValues.push({ irr: yearMatch[1], year: yearMatch[2], raw: yearMatch[0] });
               seenIRR.add(key);
             }
           }
           // 2. IRR with labels: '0.1160% (Base IRR)', '0.1417 (Project IRR)', etc.
-          const irrLabelRegex = /([0-9]+\.[0-9]+)\s*%?\s*\(([^)]+IRR)\)/gi;
+          const irrLabelRegex = /([0-9]+\.[0-9]+%?)\s*\(([^)]+IRR)\)/gi;
           let labelMatch;
           while ((labelMatch = irrLabelRegex.exec(answerText)) !== null) {
             const key = labelMatch[1];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(labelMatch[1]), label: labelMatch[2].trim(), raw: labelMatch[0] });
+              irrValues.push({ irr: labelMatch[1], label: labelMatch[2].trim(), raw: labelMatch[0] });
               seenIRR.add(key);
             }
           }
           // 3. Comma-separated IRR lists: 'It is 0.732..., 0.623..., ...'
-          const irrCommaListRegex = /(?:is|are|include|varies\.|values?\s*[:=])\s*([0-9.,\sand]+)/gi;
+          const irrCommaListRegex = /(?:is|are|include|varies\.|values?\s*[:=])\s*([0-9.,\sand%]+)/gi;
           let commaListMatch;
           while ((commaListMatch = irrCommaListRegex.exec(answerText)) !== null) {
             // Replace 'and' with comma, then split
             const cleaned = commaListMatch[1].replace(/\band\b/gi, ',');
-            const numbers = cleaned.match(/([0-9]+\.[0-9]+|[0-9]+)/g);
+            const numbers = cleaned.match(/([0-9]+\.[0-9]+%?|[0-9]+%?)/g);
             if (numbers) {
               numbers.forEach(n => {
                 if (!seenIRR.has(n)) {
-                  irrValues.push({ irr: parseFloat(n), raw: n });
+                  irrValues.push({ irr: n, raw: n });
                   seenIRR.add(n);
                 }
               });
@@ -243,14 +243,86 @@
           const irrPercentRegex = /([0-9]+\.[0-9]+)\s*%/g;
           let percentMatch;
           while ((percentMatch = irrPercentRegex.exec(answerText)) !== null) {
-            const key = percentMatch[1];
+            const key = percentMatch[0];
             if (!seenIRR.has(key)) {
-              irrValues.push({ irr: parseFloat(percentMatch[1]), raw: percentMatch[0] });
+              irrValues.push({ irr: percentMatch[0], raw: percentMatch[0] });
               seenIRR.add(key);
             }
           }
+          // 5. Standalone decimal IRR values (not percent, not year, not label)
+          // 6. IRR percent values with year context: '0.1741% over 10 years'
+          // 7. Handle IRR values for years 2-10 and prevent duplicate plain values
+          const yearIrrs = [];
+          const yearIrrRegex = /([0-9]+\.[0-9]+%?)\s*(?:over|for)\s*(\d+) years?/gi;
+          let yearIrrMatch;
+          while ((yearIrrMatch = yearIrrRegex.exec(answerText)) !== null) {
+            const key = yearIrrMatch[1] + '_year_' + yearIrrMatch[2];
+            if (!irrValues.some(v => v.irr === yearIrrMatch[1] && v.year == yearIrrMatch[2])) {
+              irrValues.push({ irr: yearIrrMatch[1], year: yearIrrMatch[2], label: `Year ${yearIrrMatch[2]}`, raw: yearIrrMatch[0] });
+              yearIrrs.push(yearIrrMatch[1]);
+            }
+          }
+          // Remove plain values that match a year IRR
+          // Remove plain values that match a year IRR, and prevent duplicate year entries
+          irrValues = irrValues.filter((v, i, arr) => {
+            // Remove plain value if a year IRR exists for this value
+            if (!v.year && yearIrrs.includes(v.irr)) {
+              return false;
+            }
+            // Remove duplicate year entries (same year and value)
+            if (v.year) {
+              // Only keep the first occurrence of this year/value
+              return arr.findIndex(x => x.year === v.year && x.irr === v.irr) === i;
+            }
+            // Remove duplicate plain values (same value, no year)
+            if (!v.year) {
+              return arr.findIndex(x => !x.year && x.irr === v.irr) === i;
+            }
+            return true;
+          });
+          const irrPercentYearRegex = /([0-9]+\.[0-9]+%)\s*(?:over|for)\s*(\d+) years?/gi;
+          let percentYearMatch;
+          while ((percentYearMatch = irrPercentYearRegex.exec(answerText)) !== null) {
+            const key = percentYearMatch[1] + '_year_' + percentYearMatch[2];
+            if (!seenIRR.has(key)) {
+              irrValues.push({ irr: percentYearMatch[1], year: percentYearMatch[2], label: `Year ${percentYearMatch[2]}`, raw: percentYearMatch[0] });
+              seenIRR.add(key);
+            }
+          }
+          const irrDecimalRegex = /(?<![\d%])([0-9]+\.[0-9]+)(?![\d%])/g;
+          let decimalMatch;
+          while ((decimalMatch = irrDecimalRegex.exec(answerText)) !== null) {
+            const key = decimalMatch[1];
+            // Only add if not already captured with year or label
+            if (!irrValues.some(v => v.irr === key && (v.year || v.label))) {
+              if (!seenIRR.has(key)) {
+                irrValues.push({ irr: key, raw: key });
+                seenIRR.add(key);
+              }
+            }
+          }
           // Overwrite localStorage with IRR values in answer order, no duplicates
-          localStorage.setItem('irrValues', JSON.stringify(irrValues));
+          // Final deduplication: keep only the most specific entry for each IRR value
+          const uniqueIRRs = {};
+          irrValues.forEach(v => {
+            const key = v.irr;
+            // Prefer year/label over plain value
+            if (!uniqueIRRs[key]) {
+              uniqueIRRs[key] = v;
+            } else {
+              if ((v.year || v.label) && !uniqueIRRs[key].year && !uniqueIRRs[key].label) {
+                uniqueIRRs[key] = v;
+              }
+            }
+          });
+          // Remove duplicate year entries
+          const finalIRRs = Object.values(uniqueIRRs).filter((v, i, arr) => {
+            if (v.year) {
+              return arr.findIndex(x => x.year === v.year && x.irr === v.irr) === i;
+            }
+            return true;
+          });
+          localStorage.setItem('irrValues', JSON.stringify(finalIRRs));
           try {
             const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
             if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');

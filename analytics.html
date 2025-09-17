@@ -23,42 +23,56 @@
     .navbar {
       width: 100%;
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 15px 40px;
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(10px);
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 18px 40px 10px 40px;
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+      border-radius: 0 0 24px 24px;
     }
 
     .navbar .logo {
-      font-size: 22px;
+      font-size: 26px;
       font-weight: bold;
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
+      margin-bottom: 10px;
+      color: #fff;
+      text-shadow: 0 2px 8px #2575fc44;
     }
 
     .nav-buttons {
       display: flex;
-      gap: 20px;
+      flex-wrap: wrap;
+      gap: 18px 32px;
+      justify-content: center;
+      width: 100%;
+      margin-bottom: 0;
     }
 
     .nav-buttons button {
-      background: white;
+      background: linear-gradient(90deg, #fff 80%, #e3eaff 100%);
       color: #2575fc;
       border: none;
-      padding: 10px 20px;
-      font-size: 15px;
-      border-radius: 8px;
+      padding: 12px 32px;
+      font-size: 16px;
+      border-radius: 12px;
       cursor: pointer;
-      font-weight: 500;
+      font-weight: 600;
       transition: all 0.3s ease;
+      margin-bottom: 10px;
+      box-shadow: 0 2px 12px rgba(37,117,252,0.10);
+      outline: none;
+      letter-spacing: 0.5px;
     }
 
+    .nav-buttons button:hover,
+    .nav-buttons button:focus,
     .nav-buttons button:hover {
-      background: #2575fc;
-      color: white;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      background: linear-gradient(90deg, #2575fc 80%, #6a11cb 100%);
+      color: #fff;
+      transform: translateY(-3px) scale(1.04);
+      box-shadow: 0 6px 18px rgba(37,117,252,0.18);
     }
 
     /* Page content placeholder */
@@ -79,14 +93,15 @@
     <div class="logo">📊 Analytics Pro</div>
     <div class="nav-buttons">
       <button onclick="goTo('dashboard.html')">Dashboard</button>
-      <button onclick="goTo('chart.html')">Chart</button>
-      <button onclick="goTo('reports.html')">Reports</button>
+      <button onclick="goTo('reports.html')">Download Pdf</button>
+      <button onclick="goTo('reports.html')">SAP Integration</button>
+      <button onclick="goTo('settings.html')">Push BI Dashboard</button>
     </div>
   </div>
 
   <!-- Page Content -->
   <div class="content">
-    Welcome to Analytics Pro 🚀
+
   </div>
 
   <script>
