@@ -250,17 +250,79 @@
             }
           }
           // 5. Standalone decimal IRR values (not percent, not year, not label)
+          // 6. IRR percent values with year context: '0.1741% over 10 years'
+          // 7. Handle IRR values for years 2-10 and prevent duplicate plain values
+          const yearIrrs = [];
+          const yearIrrRegex = /([0-9]+\.[0-9]+%?)\s*(?:over|for)\s*(\d+) years?/gi;
+          let yearIrrMatch;
+          while ((yearIrrMatch = yearIrrRegex.exec(answerText)) !== null) {
+            const key = yearIrrMatch[1] + '_year_' + yearIrrMatch[2];
+            if (!irrValues.some(v => v.irr === yearIrrMatch[1] && v.year == yearIrrMatch[2])) {
+              irrValues.push({ irr: yearIrrMatch[1], year: yearIrrMatch[2], label: `Year ${yearIrrMatch[2]}`, raw: yearIrrMatch[0] });
+              yearIrrs.push(yearIrrMatch[1]);
+            }
+          }
+          // Remove plain values that match a year IRR
+          // Remove plain values that match a year IRR, and prevent duplicate year entries
+          irrValues = irrValues.filter((v, i, arr) => {
+            // Remove plain value if a year IRR exists for this value
+            if (!v.year && yearIrrs.includes(v.irr)) {
+              return false;
+            }
+            // Remove duplicate year entries (same year and value)
+            if (v.year) {
+              // Only keep the first occurrence of this year/value
+              return arr.findIndex(x => x.year === v.year && x.irr === v.irr) === i;
+            }
+            // Remove duplicate plain values (same value, no year)
+            if (!v.year) {
+              return arr.findIndex(x => !x.year && x.irr === v.irr) === i;
+            }
+            return true;
+          });
+          const irrPercentYearRegex = /([0-9]+\.[0-9]+%)\s*(?:over|for)\s*(\d+) years?/gi;
+          let percentYearMatch;
+          while ((percentYearMatch = irrPercentYearRegex.exec(answerText)) !== null) {
+            const key = percentYearMatch[1] + '_year_' + percentYearMatch[2];
+            if (!seenIRR.has(key)) {
+              irrValues.push({ irr: percentYearMatch[1], year: percentYearMatch[2], label: `Year ${percentYearMatch[2]}`, raw: percentYearMatch[0] });
+              seenIRR.add(key);
+            }
+          }
           const irrDecimalRegex = /(?<![\d%])([0-9]+\.[0-9]+)(?![\d%])/g;
           let decimalMatch;
           while ((decimalMatch = irrDecimalRegex.exec(answerText)) !== null) {
             const key = decimalMatch[1];
-            if (!seenIRR.has(key)) {
-              irrValues.push({ irr: key, raw: key });
-              seenIRR.add(key);
+            // Only add if not already captured with year or label
+            if (!irrValues.some(v => v.irr === key && (v.year || v.label))) {
+              if (!seenIRR.has(key)) {
+                irrValues.push({ irr: key, raw: key });
+                seenIRR.add(key);
+              }
             }
           }
           // Overwrite localStorage with IRR values in answer order, no duplicates
-          localStorage.setItem('irrValues', JSON.stringify(irrValues));
+          // Final deduplication: keep only the most specific entry for each IRR value
+          const uniqueIRRs = {};
+          irrValues.forEach(v => {
+            const key = v.irr;
+            // Prefer year/label over plain value
+            if (!uniqueIRRs[key]) {
+              uniqueIRRs[key] = v;
+            } else {
+              if ((v.year || v.label) && !uniqueIRRs[key].year && !uniqueIRRs[key].label) {
+                uniqueIRRs[key] = v;
+              }
+            }
+          });
+          // Remove duplicate year entries
+          const finalIRRs = Object.values(uniqueIRRs).filter((v, i, arr) => {
+            if (v.year) {
+              return arr.findIndex(x => x.year === v.year && x.irr === v.irr) === i;
+            }
+            return true;
+          });
+          localStorage.setItem('irrValues', JSON.stringify(finalIRRs));
           try {
             const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
             if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');
