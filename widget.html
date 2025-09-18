@@ -209,7 +209,7 @@
           console.log('Raw API response:', data);
           const answerText = data?.answer?.answerText || '';
           const refs = data?.answer?.references || [];
-          // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates allowed
+          // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates 
           let irrValues = [];
           const seenIRR = new Set();
           // 1. Year-based IRRs: '0.1514 for 2 years', '0.1514% (2 years)', etc.
