@@ -42,6 +42,14 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-monitor"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>
           <span class="hidden md:inline">Push BI Dashboard</span>
         </button>
+        <button id="previewPdfBtn" title="Preview PDF" class="bg-white/10 hover:bg-sky-600 text-sky-300 hover:text-white rounded-full p-3 shadow-lg transition-all flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-eye"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span class="hidden md:inline">Preview</span>
+        </button>
+        <button id="shareBtnSimple" title="Share PDF" class="bg-white/10 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-full p-3 shadow-lg transition-all flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-share-2"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <span class="hidden md:inline">Share</span>
+        </button>
       </div>
     </header>
 
@@ -90,6 +98,133 @@
   </main>
 
   <script>
+
+    // Make webhook constants (client-side send)
+    const MAKE_WEBHOOK_URL = "https://hook.eu2.make.com/w74s2h3fbypn8e7x6i7msitnx17ybglb";
+    const MAKE_API_KEY = "super-secret-12345";
+
+    // cached PDF blob to avoid re-generating multiple times
+    let cachedPdfBlob = null;
+    async function ensurePdfBlob() {
+      if (cachedPdfBlob) return cachedPdfBlob;
+      // generate PDF using html2pdf and return a Blob
+      await import('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+      const opt = { margin: 0.5, filename: 'dashboard.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' } };
+      // html2pdf returns a promise via node.js style; we convert to a Blob via output('blob')
+      return new Promise((resolve, reject) => {
+        try {
+          html2pdf().set(opt).from(document.body).output('blob').then(blob => {
+            cachedPdfBlob = blob;
+            resolve(blob);
+          }).catch(reject);
+        } catch (e) { reject(e); }
+      });
+    }
+
+    // Simple Share modal (insert near other modal logic)
+    const simpleShareModalHtml = `
+      <div id="simpleShareModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center">
+        <div class="bg-white/5 p-6 rounded shadow-lg w-full max-w-lg glass">
+          <h3 class="text-xl mb-2">Share Dashboard (PDF)</h3>
+          <div class="space-y-2">
+            <label class="block text-sm">To (comma-separated)</label>
+            <input id="simpleTo" class="w-full p-2 rounded bg-white/5" />
+            <label class="block text-sm">CC (optional)</label>
+            <input id="simpleCc" class="w-full p-2 rounded bg-white/5" />
+            <label class="block text-sm">Subject</label>
+            <input id="simpleSubject" class="w-full p-2 rounded bg-white/5" value="Shared Dashboard" />
+            <div id="simpleShareStatus" class="text-sm text-yellow-300"></div>
+            <div class="flex justify-end gap-2 mt-4">
+              <button id="simpleShareCancel" class="px-4 py-2 rounded bg-gray-600">Cancel</button>
+              <button id="simpleShareSend" class="px-4 py-2 rounded bg-indigo-600 text-white">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', simpleShareModalHtml);
+    const simpleShareModal = document.getElementById('simpleShareModal');
+    const simpleTo = document.getElementById('simpleTo');
+    const simpleCc = document.getElementById('simpleCc');
+    const simpleSubject = document.getElementById('simpleSubject');
+    const simpleShareStatus = document.getElementById('simpleShareStatus');
+    const simpleShareSend = document.getElementById('simpleShareSend');
+    const simpleShareCancel = document.getElementById('simpleShareCancel');
+
+    document.getElementById('shareBtnSimple').addEventListener('click', () => {
+      simpleShareModal.classList.remove('hidden'); simpleShareModal.classList.add('flex');
+      simpleShareStatus.textContent = '';
+    });
+    simpleShareCancel.addEventListener('click', () => { simpleShareModal.classList.remove('flex'); simpleShareModal.classList.add('hidden'); });
+
+    simpleShareSend.addEventListener('click', async () => {
+      simpleShareStatus.textContent = 'Preparing PDF...';
+      try {
+        const blob = await ensurePdfBlob();
+        if (!blob) throw new Error('Failed to generate PDF');
+        simpleShareStatus.textContent = 'Uploading to Make...';
+        const form = new FormData();
+        form.append('dashboard', blob, 'dashboard.pdf');
+        form.append('to', simpleTo.value || '');
+        form.append('cc', simpleCc.value || '');
+        form.append('subject', simpleSubject.value || 'Shared Dashboard');
+
+        const headers = { 'x-make-apikey': MAKE_API_KEY };
+        const resp = await fetch(MAKE_WEBHOOK_URL, { method: 'POST', headers, body: form });
+        const text = await resp.text();
+        if (resp.ok) {
+          simpleShareStatus.textContent = 'Shared via Make webhook.';
+          setTimeout(() => { simpleShareModal.classList.remove('flex'); simpleShareModal.classList.add('hidden'); }, 1200);
+        } else {
+          simpleShareStatus.textContent = 'Make webhook failed: ' + (text || resp.statusText);
+        }
+      } catch (e) {
+        console.error('Share failed', e);
+        simpleShareStatus.textContent = 'Share failed: ' + (e && e.message ? e.message : e);
+      }
+    });
+
+    // Preview modal (shows cached PDF and allows download/share)
+    const previewHtml = `
+      <div id="previewModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center">
+        <div class="bg-white/5 p-4 rounded shadow-lg w-full max-w-4xl glass">
+          <div class="flex justify-between items-center mb-2">
+            <h3 class="text-lg">PDF Preview</h3>
+            <div class="flex gap-2">
+              <button id="previewDownload" class="px-3 py-1 rounded bg-white/10">Download</button>
+              <button id="previewShare" class="px-3 py-1 rounded bg-indigo-600 text-white">Share</button>
+              <button id="previewClose" class="px-3 py-1 rounded bg-gray-600">Close</button>
+            </div>
+          </div>
+          <div style="height:70vh;">
+            <object id="pdfPreviewObject" type="application/pdf" width="100%" height="100%">Your browser does not support inline PDF preview.</object>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', previewHtml);
+    const previewModal = document.getElementById('previewModal');
+    const pdfPreviewObject = document.getElementById('pdfPreviewObject');
+    const previewDownload = document.getElementById('previewDownload');
+    const previewShare = document.getElementById('previewShare');
+    const previewClose = document.getElementById('previewClose');
+
+    document.getElementById('previewPdfBtn').addEventListener('click', async () => {
+      previewModal.classList.remove('hidden'); previewModal.classList.add('flex');
+      try {
+        const blob = await ensurePdfBlob();
+        const url = URL.createObjectURL(blob);
+        pdfPreviewObject.data = url;
+        // set download link
+        previewDownload.onclick = () => { const a = document.createElement('a'); a.href = url; a.download = 'dashboard.pdf'; document.body.appendChild(a); a.click(); a.remove(); };
+        // share opens the simple share modal and ensures the pdf is cached
+        previewShare.onclick = () => { simpleShareModal.classList.remove('hidden'); simpleShareModal.classList.add('flex'); simpleShareStatus.textContent = ''; };
+      } catch (e) {
+        console.error('Preview failed', e);
+      }
+    });
+    previewClose.addEventListener('click', () => { previewModal.classList.remove('flex'); previewModal.classList.add('hidden'); });
+
 
     // PDF download logic
     document.addEventListener('DOMContentLoaded', function() {
