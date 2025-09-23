@@ -31,7 +31,7 @@
     <header class="flex flex-col md:flex-row md:items-center md:justify-between text-center md:text-left">
       <div>
         <h1 id="dashboardTitle" class="text-4xl font-bold tracking-tight transition-all duration-300"> Dashboard</h1>
-        <p id="dashboardSubtitle" class="text-slate-300 mt-2 text-lg">IRR data overview</p>
+        <p id="dashboardSubtitle" class="text-slate-300 mt-2 text-lg"> data overview</p>
       </div>
       <div class="flex gap-4 justify-center md:justify-end mt-4 md:mt-0">
         <button id="downloadPdfBtn" title="Download PDF" class="bg-white/10 hover:bg-blue-600 text-blue-300 hover:text-white rounded-full p-3 shadow-lg transition-all flex items-center gap-2">
@@ -55,7 +55,7 @@
 
     <section class="grid grid-cols-1 md:grid-cols-2 gap-8">
       <div class="glass flex flex-col gap-4">
-        <h2 class="text-sm text-slate-300 mb-2">IRR Key Metrics</h2>
+        <h2 class="text-sm text-slate-300 mb-2"> Key Metrics</h2>
         <div id="irrMetricCards" class="grid grid-cols-2 gap-4"></div>
         <div>
           <h3 class="text-sm text-slate-300 mb-2">Extra Metrics</h3>
@@ -68,7 +68,7 @@
           <thead>
             <tr>
               <th class="border border-white/20 px-4 py-2 cursor-pointer" id="sortLabel">Label/Year</th>
-              <th class="border border-white/20 px-4 py-2 cursor-pointer" id="sortIRR">IRR (%)</th>
+               <th class="border border-white/20 px-4 py-2 cursor-pointer" id="sortIRR">Value (%)</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -79,15 +79,15 @@
 
     <section class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
       <div class="glass card col-span-1 md:col-span-3 animate-fadein">
-        <h3 class="text-lg mb-3">IRR Radar Chart</h3>
+          <h3 class="text-lg mb-3">  Bar Chart</h3>
         <canvas id="irrRadarChart"></canvas>
       </div>
       <div class="glass card col-span-1 animate-fadein">
-        <h3 class="text-lg mb-3">IRR Line Chart</h3>
+          <h3 class="text-lg mb-3">  Line Chart</h3>
         <canvas id="irrLineChart"></canvas>
       </div>
       <div class="glass card col-span-1 animate-fadein">
-        <h3 class="text-lg mb-3">IRR Donut Chart</h3>
+          <h3 class="text-lg mb-3">  Donut Chart</h3>
         <canvas id="irrDonutChart"></canvas>
       </div>
     </section>
@@ -262,16 +262,16 @@
       const titleEl = document.getElementById('dashboardTitle');
       const subtitleEl = document.getElementById('dashboardSubtitle');
       let title = 'Dashboard';
-      let subtitle = 'IRR data overview';
+      let subtitle = ' data overview';
       if (irrData.some(d => d.label && d.label.toLowerCase().includes('lead silver recovery'))) {
-        title = 'Lead Silver Recovery Project IRR';
-        subtitle = 'Varying IRRs for Lead Silver Recovery';
+        title = 'Lead Silver Recovery Project ';
+        subtitle = 'Varying  for Lead Silver Recovery';
       } else if (irrData.some(d => d.label && d.label.toLowerCase().includes('fumer'))) {
-        title = 'Fumer Project IRR';
-        subtitle = 'IRR for Fumer Technology';
+        title = 'Fumer Project ';
+        subtitle = ' for Fumer Technology';
       } else if (irrData.some(d => d.year)) {
-        title = 'STL IRR Over Years';
-        subtitle = 'Year-wise IRR breakdown';
+        title = 'STL  Over Years';
+        subtitle = 'Year-wise breakdown';
       }
       titleEl.textContent = title;
       subtitleEl.textContent = subtitle;
@@ -296,9 +296,9 @@
         growth = (((last-first)/Math.abs(first))*100).toFixed(2) + '%';
       }
       document.getElementById('extraMetricCards').innerHTML = `
-        <div class="metric-card animate-fadein"><span class="metric-icon">🧮</span>Average IRR: <span class="text-yellow-300">${avg !== '-' ? avg + '%' : '-'}</span></div>
-        <div class="metric-card animate-fadein"><span class="metric-icon">🚀</span>Highest IRR: <span class="text-green-300">${max !== '-' ? max + '%' : '-'}</span></div>
-        <div class="metric-card animate-fadein"><span class="metric-icon">📉</span>Lowest IRR: <span class="text-red-300">${min !== '-' ? min + '%' : '-'}</span></div>
+        <div class="metric-card animate-fadein"><span class="metric-icon">🧮</span>Average Rate: <span class="text-yellow-300">${avg !== '-' ? avg + '%' : '-'}</span></div>
+        <div class="metric-card animate-fadein"><span class="metric-icon">🚀</span>Highest Rate: <span class="text-green-300">${max !== '-' ? max + '%' : '-'}</span></div>
+        <div class="metric-card animate-fadein"><span class="metric-icon">📉</span>Lowest Rate: <span class="text-red-300">${min !== '-' ? min + '%' : '-'}</span></div>
         <div class="metric-card animate-fadein"><span class="metric-icon">📊</span>Growth Rate: <span class="text-blue-300">${growth}</span></div>
       `;
 
@@ -325,35 +325,29 @@
       const now = new Date();
       lastUpdatedEl.textContent = `Last Updated: ${now.toLocaleString()}`;
 
-      // Radar Chart
+      // Bar Chart (replaces previous Radar chart)
       if(radarChart) radarChart.destroy();
       radarChart = new Chart(document.getElementById('irrRadarChart'), {
-        type: 'radar',
+        type: 'bar',
         data: {
           labels,
           datasets: [{
-            label: 'IRR (%)',
+            label: 'Value (%)',
             data: labels.map((_, i) => {
               let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
               let num = parseFloat(value);
               return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
             }),
-            backgroundColor: 'rgba(96,165,250,0.15)',
+            backgroundColor: colors,
             borderColor: '#60a5fa',
-            pointBackgroundColor: colors,
-            pointBorderColor: '#fff',
-            borderWidth: 2
+            borderWidth: 1
           }]
         },
         options: {
           plugins: { legend: { labels: { color: '#e6eef8' } } },
           scales: {
-            r: {
-              angleLines: { color: '#334155' },
-              grid: { color: '#334155' },
-              pointLabels: { color: '#e6eef8', font: { size: 14 } },
-              ticks: { color: '#e6eef8', beginAtZero: true }
-            }
+            x: { ticks: { color: '#e6eef8' }, grid: { color: '#334155' } },
+            y: { ticks: { color: '#e6eef8' }, grid: { color: '#334155' }, beginAtZero: true }
           }
         }
       });
@@ -365,7 +359,7 @@
         data: {
           labels,
           datasets: [{
-            label: 'IRR (%)',
+            label: 'Value (%)',
             data: labels.map((_, i) => {
               let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
               let num = parseFloat(value);
@@ -389,19 +383,22 @@
         }
       });
 
-      // Donut Chart
+      // Donut Chart - use numeric values as labels so legend shows actual numbers
       if(donutChart) donutChart.destroy();
+      // compute numeric dataset and formatted labels (e.g. "12.3456%")
+      const donutNums = labels.map((_, i) => {
+        let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
+        let num = parseFloat(value);
+        return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
+      });
+      const donutLabels = donutNums.map(n => isNaN(n) ? '0' : (Number(n).toFixed(4) + '%'));
       donutChart = new Chart(document.getElementById('irrDonutChart'), {
         type: 'doughnut',
         data: {
-          labels,
+          labels: donutLabels,
           datasets: [{
-            label: 'IRR (%)',
-            data: labels.map((_, i) => {
-              let value = (typeof irrData[i] === 'object' && irrData[i] !== null) ? irrData[i].irr : irrData[i];
-              let num = parseFloat(value);
-              return (value !== null && value !== undefined && !isNaN(num)) ? num : 0;
-            }),
+            label: 'Value (%)',
+            data: donutNums,
             backgroundColor: colors,
             borderColor: '#fff',
             borderWidth: 2

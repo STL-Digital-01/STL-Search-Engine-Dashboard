@@ -90,7 +90,7 @@
         </div>
         <div class="search-shell" id="searchShell">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:10px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="searchInput" class="modern-search" placeholder="Ask anything about IRR data, projects, finance..." autocomplete="off" />
+          <input id="searchInput" class="modern-search" placeholder="Ask anything about value/rate data, projects, finance..." autocomplete="off" />
           <button id="askBtn" class="icon-btn" disabled>
             <span>Ask</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -145,14 +145,14 @@
           btn.disabled = true; btn.classList.add('loading');
           btn.innerHTML = '<span>Loading</span>';
           answerRegion.innerHTML = `
-            <div class="answer-card">
-              <span class="badge">Generating</span>
-              <div class="sk-line skeleton" style="width:60%"></div>
-              <div class="sk-line skeleton" style="width:85%"></div>
-              <div class="sk-line skeleton" style="width:78%"></div>
-              <div class="sk-line skeleton" style="width:66%"></div>
-              <div class="sk-line skeleton" style="width:40%"></div>
-            </div>`;
+                <div class="answer-card">
+                  <span class="badge">Generating</span>
+                  <div class="sk-line skeleton" style="width:60%"></div>
+                  <div class="sk-line skeleton" style="width:85%"></div>
+                  <div class="sk-line skeleton" style="width:78%"></div>
+                  <div class="sk-line skeleton" style="width:66%"></div>
+                  <div class="sk-line skeleton" style="width:40%"></div>
+                </div>`;
         } else {
           btn.disabled = false; btn.classList.remove('loading');
           btn.innerHTML = '<span>Ask</span> <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
