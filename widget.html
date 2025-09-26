@@ -64,9 +64,7 @@
     .chips { margin-top:18px; display:flex; flex-wrap:wrap; gap:8px; }
     .chip { background:#2575fc; color:#fff; border:none; padding:6px 12px; border-radius:24px; font-size:12px; cursor:pointer; line-height:1; display:inline-flex; align-items:center; gap:4px; box-shadow:0 2px 6px rgba(0,0,0,.2); }
     .chip:hover { background:#1d60cc; }
-    .cite-bar { margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; }
-    .cite { background:#f1f5f9; color:#475569; padding:4px 8px; border-radius:6px; font-size:11px; cursor:pointer; border:1px solid #e2e8f0; }
-    .cite.active { background:#2575fc; color:#fff; border-color:#1d60cc; }
+  /* citation UI removed */
     .citation-detail { margin-top:10px; background:#f8fafc; border:1px solid #e2e8f0; padding:12px 14px; border-radius:10px; font-size:12px; max-height:220px; overflow:auto; }
     .skeleton { background:linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 37%,#f1f5f9 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; border-radius:6px; }
     .sk-line { height:14px; margin:6px 0; }
@@ -186,12 +184,12 @@
             query: { text: queryText, queryId: "" },
             session: "",
             relatedQuestionsSpec: { enable: true },
-            answerGenerationSpec: {
+              answerGenerationSpec: {
               ignoreAdversarialQuery: true,
               ignoreNonAnswerSeekingQuery: false,
               ignoreLowRelevantContent: true,
               multimodalSpec: {},
-              includeCitations: true,
+              // citations removed from payload
               promptSpec: { preamble: "Given the conversation between a user and a helpful assistant and some search results, create a final answer for the assistant. The answer should use all relevant information from the search results, not introduce any additional information, and use exactly the same words as the search results when possible. The assistant's answer should be no more than 50 words. The user is an expert who has an in-depth understanding of the subject matter. The assistant should answer in a technical manner that uses specialized knowledge and terminology when it helps answer the query." },
               modelSpec: { modelVersion: "stable" }
             }
@@ -208,7 +206,6 @@
           const data = await res.json();
           console.log('Raw API response:', data);
           const answerText = data?.answer?.answerText || '';
-          const refs = data?.answer?.references || [];
           // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates 
           let irrValues = [];
           const seenIRR = new Set();
@@ -307,10 +304,16 @@
               seenIRR.add(key);
             }
           }
-          const irrDecimalRegex = /(?<![\d%])([0-9]+\.[0-9]+)(?![\d%])/g;
+          // Match decimal numbers but avoid using lookbehind/behind for compatibility
+          const irrDecimalRegex = /([0-9]+\.[0-9]+)/g;
           let decimalMatch;
           while ((decimalMatch = irrDecimalRegex.exec(answerText)) !== null) {
             const key = decimalMatch[1];
+            const idx = decimalMatch.index;
+            const before = answerText[idx - 1] || '';
+            const after = answerText[idx + decimalMatch[0].length] || '';
+            // skip if adjacent to a digit or percent sign (to approximate word boundaries used earlier)
+            if (/\d|%/.test(before) || /\d|%/.test(after)) continue;
             // Only add if not already captured with year or label
             if (!irrValues.some(v => v.irr === key && (v.year || v.label))) {
               if (!seenIRR.has(key)) {
@@ -345,10 +348,54 @@
             const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
             if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');
           } catch(e) { /* silent fail */ }
-          let citeHtml = '';
-          if(refs.length){
-            citeHtml = '<div class="cite-bar">' + refs.map((r,i)=>`<span class="cite" data-cite-index="${i}">Ref ${i+1}</span>`).join('') + '</div>';
+
+          // --- New: parse price breakdowns and labeled cost components from answer text ---
+          try {
+            // Example sentence patterns handled:
+            // "For material 100001, Silvassa Plant (PL02) offers the lowest total per-unit cost at $6.70. This is calculated as Vendor Price ($1.10) + Production Cost ($4.80) + Transport Cost ($0.70) + Holding Cost ($0.10)."
+            const priceBreakdowns = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+            const pricePattern = /For\s+material\s+(\d+),\s*([^\(]+?)\s*\((PL\d+)\)\s*offers the lowest total per-unit cost at\s*\$?([0-9]+\.[0-9]+)/i;
+            const priceMatch = pricePattern.exec(answerText);
+            if (priceMatch) {
+              const material = priceMatch[1];
+              const plantName = priceMatch[2].trim();
+              const plantId = priceMatch[3];
+              const totalCost = parseFloat(priceMatch[4]);
+
+              // Look for the 'calculated as' clause and split components by '+'
+              const calcMatch = /calculated as\s*([^\.]*)/i.exec(answerText);
+              const components = [];
+              if (calcMatch && calcMatch[1]) {
+                const parts = calcMatch[1].split('+').map(p => p.trim()).filter(Boolean);
+                parts.forEach(p => {
+                  // Try to capture labeled component: Label ($x.xx)
+                  const labeled = /([A-Za-z0-9 \-\/]+?)\s*\(\$?([0-9]+\.[0-9]+)\)/i.exec(p);
+                  if (labeled) {
+                    components.push({ label: labeled[1].trim(), value: parseFloat(labeled[2]) });
+                  } else {
+                    // If no label, try to capture numeric value and use it as label per request
+                    const valOnly = /\$?([0-9]+\.[0-9]+)/.exec(p);
+                    if (valOnly) {
+                      components.push({ label: valOnly[1], value: parseFloat(valOnly[1]) });
+                    } else {
+                      // fallback: store raw part as label with null value
+                      components.push({ label: p, value: null });
+                    }
+                  }
+                });
+              }
+
+              priceBreakdowns.push({ material, plantName, plantId, totalCost, components, timestamp: Date.now() });
+              localStorage.setItem('priceBreakdowns', JSON.stringify(priceBreakdowns));
+              try {
+                const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
+                if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'priceBreakdowns', data: priceBreakdowns }, '*');
+              } catch (e) { /* silent */ }
+            }
+          } catch (e) {
+            console.error('Price breakdown parse error', e);
           }
+          let citeHtml = '';
           if(answerText){
             answerRegion.innerHTML = `
               <div class="answer-card">
@@ -359,37 +406,7 @@
           } else {
             answerRegion.innerHTML = '<p class="error-text">No answer returned.</p>';
           }
-          // Build citation reference blocks (hidden until clicked)
-          if(refs.length){
-            citationsPanel.innerHTML = '<div id="refBlocks" style="margin-top:18px;"></div>';
-            const refContainer = document.getElementById('refBlocks');
-            refs.forEach((r,i)=>{
-              const content = r?.chunkInfo?.content || '(no excerpt)';
-              const uri = r?.chunkInfo?.documentMetadata?.uri || '';
-              const title = r?.chunkInfo?.documentMetadata?.title || 'Source';
-              const block = document.createElement('div');
-              block.className = 'ref-block';
-              block.style.display = 'none';
-              block.id = 'ref-'+i;
-              block.innerHTML = `<div class="faded-label">REF ${i+1}: ${escapeHtml(title)}</div><pre>${escapeHtml(content.substring(0,1600))}${content.length>1600?'...':''}</pre>${uri?`<div class="mini">URI: ${escapeHtml(uri)}</div>`:''}`;
-              refContainer.appendChild(block);
-            });
-            // Citation click handler
-            answerRegion.querySelectorAll('.cite').forEach(el => {
-              el.addEventListener('click', ()=>{
-                const idx = el.getAttribute('data-cite-index');
-                const target = document.getElementById('ref-'+idx);
-                const active = el.classList.contains('active');
-                // toggle
-                answerRegion.querySelectorAll('.cite').forEach(c=>c.classList.remove('active'));
-                document.querySelectorAll('.ref-block').forEach(b=> b.style.display='none');
-                if(!active){
-                  el.classList.add('active');
-                  target.style.display='block';
-                }
-              });
-            });
-          }
+          // citation UI and blocks removed per request
           // Related questions chips
           if(Array.isArray(data?.answer?.relatedQuestions)){
             relatedWrap.innerHTML = '';
