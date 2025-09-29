@@ -50,13 +50,17 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-share-2"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
           <span class="hidden md:inline">Share</span>
         </button>
+        
       </div>
     </header>
+
+  
 
     <section class="grid grid-cols-1 md:grid-cols-2 gap-8">
       <div class="glass flex flex-col gap-4">
         <h2 class="text-sm text-slate-300 mb-2"> Key Metrics</h2>
         <div id="irrMetricCards" class="grid grid-cols-2 gap-4"></div>
+        <div id="valueMappingSection" class="mt-3 text-sm text-slate-300"></div>
         <div>
           <h3 class="text-sm text-slate-300 mb-2">Extra Metrics</h3>
           <div id="extraMetricCards" class="grid grid-cols-2 gap-4"></div>
@@ -92,9 +96,7 @@
       </div>
     </section>
 
-    <section id="vendorSection" class="mt-8">
-      <!-- Vendor cards will be rendered here dynamically -->
-    </section>
+    
   </main>
 
   <script>
@@ -105,6 +107,7 @@
 
     // cached PDF blob to avoid re-generating multiple times
     let cachedPdfBlob = null;
+    // Price breakdowns, headers and vendor sections are visible by default.
     async function ensurePdfBlob() {
       if (cachedPdfBlob) return cachedPdfBlob;
       // generate PDF using html2pdf and return a Blob
@@ -120,6 +123,37 @@
         } catch (e) { reject(e); }
       });
     }
+
+    // Render explicit mapping of Value N -> numeric value -> matched label
+    function renderValueMappings(irrData) {
+      const container = document.getElementById('valueMappingSection');
+      if (!irrData || !irrData.length) { container.innerHTML = ''; return; }
+      // Use existing getMatchedLabelForValue to map
+      const rows = irrData.map((d, i) => {
+        const raw = (typeof d === 'object' && d !== null) ? d.irr : d;
+        const matched = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(raw) : null;
+        let matchedText = '';
+        if (matched) {
+          if (matched.type === 'component') matchedText = matched.label;
+          else if (matched.type === 'total') matchedText = `${matched.plantId || ''} ${matched.plantName || ''}`.trim() + (matched.isLowest ? ' (Lowest)' : '');
+        }
+        return `<div class="flex justify-between"><div>Value ${i+1}</div><div class="font-mono">${escapeHtml(String(raw))}</div><div class="text-slate-300">${escapeHtml(matchedText)}</div></div>`;
+      }).join('<hr/>');
+      container.innerHTML = rows;
+    }
+
+    // simple HTML escape helper
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    
 
     // Simple Share modal (insert near other modal logic)
     const simpleShareModalHtml = `
@@ -156,6 +190,8 @@
       simpleShareStatus.textContent = '';
     });
     simpleShareCancel.addEventListener('click', () => { simpleShareModal.classList.remove('flex'); simpleShareModal.classList.add('hidden'); });
+
+    
 
     simpleShareSend.addEventListener('click', async () => {
       simpleShareStatus.textContent = 'Preparing PDF...';
@@ -278,11 +314,108 @@
 
       // Animated metric cards for IRR values
       const irrMetricCards = document.getElementById('irrMetricCards');
+  // Load price breakdowns (if present) to attach component labels to numeric values where possible.
+  // Note: price breakdown UI is removed, but reading this allows matching labels for Key Metrics.
+  let pbList = [];
+  try { pbList = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]'); } catch (e) { pbList = []; }
+      // Flatten components for quick numeric matching with metadata: [{value, label, type, plantId, plantName, material}]
+      const pbComponents = [];
+      const lowestTotalByMaterial = {};
+      pbList.forEach(entry => {
+        const material = entry.material || '';
+        const plantId = entry.plantId || '';
+        const plantName = entry.plantName || '';
+        const totalVal = (entry.totalCost !== null && entry.totalCost !== undefined) ? Number(entry.totalCost) : null;
+        if (totalVal !== null) {
+          pbComponents.push({ value: totalVal, label: `Total (${plantName || plantId})`, type: 'total', plantId, plantName, material });
+          if (typeof lowestTotalByMaterial[material] === 'undefined' || totalVal < lowestTotalByMaterial[material]) {
+            lowestTotalByMaterial[material] = totalVal;
+          }
+        }
+        (entry.components || []).forEach(c => {
+          if (c && (c.value !== null && c.value !== undefined)) {
+            pbComponents.push({ value: Number(c.value), label: c.label || String(c.value), type: 'component', plantId, plantName, material });
+          }
+        });
+      });
+      const EPS = 1e-6;
+      // helper: given a raw value (string or number), find a matching component label from pbComponents
+      // Return a matched object for a numeric value: {label,type,plantId,plantName,material,isLowest}
+      function getMatchedLabelForValue(rawValue) {
+        // rawValue may contain appended text (e.g. '6.60PL02 Silvassa...') — extract first numeric token
+        if (rawValue === null || rawValue === undefined) return null;
+        const str = String(rawValue).trim();
+        const numMatch = str.match(/([0-9]+(?:\.[0-9]+)?)/);
+        if (!numMatch) return null;
+        const num = parseFloat(numMatch[1]);
+        if (isNaN(num)) return null;
+        const candidates = [];
+        // numeric epsilon matches
+        for (const pc of pbComponents) {
+          if (!isNaN(pc.value) && Math.abs(pc.value - num) < EPS) candidates.push(pc);
+        }
+        // fallback to formatted string comparison
+        if (!candidates.length) {
+          const s2 = Number(num).toFixed(2);
+          const s4 = Number(num).toFixed(4);
+          for (const pc of pbComponents) {
+            const pstr = String(pc.value);
+            if (pstr === s2 || pstr === s4 || pstr === Number(pc.value).toFixed(2) || pstr === Number(pc.value).toFixed(4)) candidates.push(pc);
+          }
+        }
+        if (!candidates.length) return null;
+        // Prefer named components when available
+        const preferred = ["vendor price","production cost","transport cost","holding cost"];
+        for (const pref of preferred) {
+          const found = candidates.find(c => c && c.label && c.label.toLowerCase().includes(pref));
+          if (found) return Object.assign({}, found);
+        }
+        // prefer component over total
+        const comp = candidates.find(c => c.type === 'component');
+        if (comp) return Object.assign({}, comp);
+        // otherwise pick total but annotate if it's the lowest for its material
+        const tot = Object.assign({}, candidates[0]);
+        if (tot && tot.type === 'total') {
+          tot.isLowest = (typeof lowestTotalByMaterial[tot.material] !== 'undefined' && Math.abs(tot.value - lowestTotalByMaterial[tot.material]) < EPS);
+        }
+        return tot;
+      }
+
       irrMetricCards.innerHTML = irrData.map((d, i) => {
-        let value = (typeof d === 'object' && d !== null) ? d.irr : d;
+        let rawValue = (typeof d === 'object' && d !== null) ? d.irr : d;
+        let num = parseFloat(rawValue);
         let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : `Value ${i+1}`)) : `Value ${i+1}`;
         let icon = '<span class="metric-icon">📈</span>';
-        return `<div class="metric-card animate-fadein">${icon}<div><div>${label}</div><div>${value}</div></div></div>`;
+        const matched = getMatchedLabelForValue(rawValue);
+        // Determine if the existing label is generic: Value N, empty, or numeric-only
+        const isGenericLabel = (/^Value \d+$/.test(label)) || label.trim() === '' || (/^[0-9]+(?:\.[0-9]+)?$/.test(String(label).trim()));
+        const rawHasExtra = String(rawValue).trim().match(/^[0-9]+(?:\.[0-9]+)?\s*$/) ? false : true;
+
+        if (matched && (isGenericLabel || rawHasExtra)) {
+          // Prefer component label formatting with explicit numeric value
+          if (matched.type === 'component') {
+            const displayVal = (!isNaN(num) ? Number(num).toFixed(2) : (matched.value !== undefined ? Number(matched.value).toFixed(2) : String(rawValue)));
+            label = `${matched.label}`;
+            // render as: Title / $value / small subtext (label)
+            return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div><span class="font-mono">$${displayVal}</span></div><div class="text-xs text-slate-300">${escapeHtml(matched.label || '')}</div></div></div>`;
+          }
+          // For totals, show plant name/ID and annotate lowest
+          if (matched.type === 'total') {
+            const plantTitle = `${matched.plantName || matched.plantId || ''}`.trim();
+            const displayVal = (!isNaN(num) ? Number(num).toFixed(2) : (matched.value !== undefined ? Number(matched.value).toFixed(2) : String(rawValue)));
+            label = `${plantTitle}${matched.isLowest ? ' (Lowest)' : ''}`;
+            // render as: Plant Title / $value / small subtext (plant id/name)
+            return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div><span class="font-mono">$${displayVal}</span></div><div class="text-xs text-slate-300">${escapeHtml(plantTitle)}</div></div></div>`;
+          }
+        }
+
+        // If matched but original label was not generic, append small matched info beneath
+        if (matched) {
+          const extra = matched.type === 'total' ? `${matched.plantId || ''} ${matched.plantName || ''}`.trim() : matched.label;
+          return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(String(rawValue))}${extra ? `<div class="text-xs text-slate-300">${escapeHtml(extra)}</div>` : ''}</div></div></div>`;
+        }
+
+        return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(String(rawValue))}</div></div></div>`;
       }).join('');
 
       // Extra Metrics as cards
@@ -314,12 +447,32 @@
       });
       const tbody = document.getElementById('irrTable').querySelector('tbody');
       tbody.innerHTML = '';
+      // Build table rows from irrData. Prefer matched labels for generic Value N entries.
+      const rows = [];
       irrData.forEach((d, i) => {
         let value = (typeof d === 'object' && d !== null) ? d.irr : d;
         let label = labels[i];
-        tbody.innerHTML += `<tr><td class="border border-white/20 px-4 py-2">${label}</td><td class="border border-white/20 px-4 py-2">${value}</td></tr>`;
+        const matchedObj = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value) : null;
+        if (matchedObj && /^Value \d+$/.test(label)) {
+          if (matchedObj.type === 'component') {
+            const numVal = parseFloat(String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || value);
+            label = `${matchedObj.label} ($${Number(numVal).toFixed(2)})`;
+          } else if (matchedObj.type === 'total') {
+            const numVal = parseFloat(String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || value);
+            const plantTitle = `${matchedObj.plantName || ''} (${matchedObj.plantId || ''})`.trim();
+            label = `${plantTitle} has a total cost of $${Number(numVal).toFixed(2)}` + (matchedObj.isLowest ? ' (Lowest)' : '');
+          }
+        }
+  // Format numeric values as currency if they look like monetary values
+  const numericToken = String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
+  const isMoney = numericToken !== undefined;
+  const displayNum = isMoney ? `$${Number(numericToken).toFixed(2)}` : escapeHtml(String(value));
+  // include small extra line showing matched label/plant if available
+  const mapped = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value) : null;
+  const extraLine = mapped ? `<div class="text-xs text-slate-300">${escapeHtml(mapped.type === 'total' ? `${mapped.plantName || mapped.plantId}` : mapped.label)}</div>` : '';
+  rows.push(`<tr><td class="border border-white/20 px-4 py-2">${escapeHtml(label)}</td><td class="border border-white/20 px-4 py-2">${displayNum}${extraLine}</td></tr>`);
       });
-
+      tbody.innerHTML = rows.join('');
       // Last Updated Timestamp
       const lastUpdatedEl = document.getElementById('lastUpdated');
       const now = new Date();
@@ -409,23 +562,7 @@
         }
       });
 
-      // Vendor cards
-      const vendorSection = document.getElementById('vendorSection');
-      vendorSection.innerHTML = '';
-      let vendorData = [];
-      try {
-        vendorData = JSON.parse(localStorage.getItem('vendorData') || '[]');
-      } catch(e) {}
-      if (Array.isArray(vendorData) && vendorData.length) {
-        vendorSection.innerHTML = '<h2 class="text-xl font-bold mb-4 text-blue-300">Vendors</h2>' + vendorData.map(v => `
-          <div class="vendor-card animate-fadein">
-            <div class="font-bold text-lg">${v.name || 'Vendor'}</div>
-            <div class="text-sm">${v.role ? `<span class='font-semibold'>Role:</span> ${v.role}` : ''}</div>
-            <div class="text-sm">${v.price ? `<span class='font-semibold'>Price:</span> ${v.price}` : ''}</div>
-            <div class="text-sm">${v.rationale ? `<span class='font-semibold'>Rationale:</span> ${v.rationale}` : ''}</div>
-          </div>
-        `).join('');
-      }
+      
     }
 
     // Assume irrValues is loaded from localStorage
@@ -462,6 +599,8 @@
         if (Array.isArray(irrArray) && irrArray.length) {
           irrDataReceived = true;
           renderDashboard(irrArray);
+          // price breakdown rendering removed; keep mappings rendered
+          renderValueMappings(irrArray);
         }
       } catch(e) { console.error('Failed to parse IRR data from localStorage', e); }
     }
@@ -478,7 +617,26 @@
     if (event.key === 'irrValues') {
       updateDashboardFromStorage();
     }
+    // storage listener: only respond to irrValues here
   });
+
+    // Also accept direct postMessage updates from the widget (more dynamic than polling storage)
+    window.addEventListener('message', (evt) => {
+      if (!evt.data) return;
+      try {
+        if (evt.data.type === 'priceBreakdowns' && evt.data.data) {
+          // Persist incoming price breakdowns so matching logic has the latest components
+          try { localStorage.setItem('priceBreakdowns', JSON.stringify(evt.data.data)); } catch (e) { console.error('Failed to save priceBreakdowns', e); }
+          // Recompute mappings if IRR values are present
+          const stored = localStorage.getItem('irrValues');
+          if (stored) renderValueMappings(JSON.parse(stored));
+        }
+        if (evt.data.type === 'irrData' && evt.data.data) {
+          try { localStorage.setItem('irrValues', JSON.stringify(evt.data.data)); } catch (e) {}
+          updateDashboardFromStorage();
+        }
+      } catch (e) { console.error('message handling error', e); }
+    });
   // Sort table columns
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sortLabel').addEventListener('click', () => {
