@@ -554,12 +554,28 @@
             const annotated = finalIRRs.map(v => {
               try {
                 const raw = (typeof v === 'object' && v !== null) ? (v.raw || v.irr || '') : String(v);
-                // Check context: if the assistant's answerText mentions 'IRR' or similar, prefer percent
-                const contextIndicatesIRR = /\birr\b/i.test(answerText) || /internal rate of return/i.test(answerText.toLowerCase());
+                // Check context: prefer percent if answer mentions IRR/percent or label suggests a rate
+                const lowercaseAnswer = String(answerText || '').toLowerCase();
+                const contextIndicatesIRR = /\birr\b/i.test(answerText) || /internal rate of return/i.test(lowercaseAnswer) || /%/.test(lowercaseAnswer) || /rate\b/.test(lowercaseAnswer);
                 let unit = 'number';
-                if (/%/.test(String(raw))) unit = 'percent';
-                else if (contextIndicatesIRR && parseFloat(String(raw)) > 0 && Math.abs(parseFloat(String(raw))) < 1) unit = 'percent';
-                else if (/irr/i.test(String(v.label || ''))) unit = 'percent';
+                const numericVal = parseFloat(String(raw));
+                // Explicit percent token wins
+                if (/%/.test(String(raw))) {
+                  unit = 'percent';
+                } else if (/irr/i.test(String(v.label || '')) || /rate/i.test(String(v.label || ''))) {
+                  // labeled IRR/rate entries are percent-like. Accept larger-than-1 values too (e.g., '17%')
+                  unit = 'percent';
+                } else if (contextIndicatesIRR) {
+                  // If answer context mentions IRR or percent, treat reasonable numeric tokens as percent.
+                  // Heuristic: if numeric value is between 0 (exclusive) and 100 (exclusive), consider percent.
+                  if (!isNaN(numericVal) && numericVal > 0 && numericVal < 100) {
+                    // Prefer percent for small decimals (<5) or values that look like percentages (>1)
+                    if (numericVal < 5 || numericVal > 1) unit = 'percent';
+                  }
+                } else if (!isNaN(numericVal) && Math.abs(numericVal) < 1) {
+                  // fallback: small decimals are likely percent/ratio
+                  unit = 'percent';
+                }
                 return Object.assign({}, v, { unit });
               } catch (e) { return v; }
             });
