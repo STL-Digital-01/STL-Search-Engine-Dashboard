@@ -53,6 +53,14 @@
         
       </div>
     </header>
+    <!-- Developer debug panel (press 'D' to toggle) -->
+    <div id="devMatchPanel" style="position:fixed;left:1rem;bottom:1rem;background:rgba(0,0,0,0.6);color:#e6eef8;padding:8px;border-radius:8px;display:none;z-index:9999;max-width:420px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="dumpMatchesBtn" style="background:#111827;color:#fff;padding:6px 10px;border-radius:6px;border:none;cursor:pointer;">Dump Matches</button>
+        <button id="closeDevPanel" style="background:transparent;border:1px solid rgba(255,255,255,0.06);color:#e6eef8;padding:6px 8px;border-radius:6px;">Close</button>
+      </div>
+      <div id="devMatchOutput" style="margin-top:8px;max-height:260px;overflow:auto;font-size:12px;line-height:1.3;color:#cbd5e1;"></div>
+    </div>
 
   
 
@@ -101,6 +109,9 @@
 
   <script>
 
+  // Developer flags
+
+
     // Make webhook constants (client-side send)
     const MAKE_WEBHOOK_URL = "https://hook.eu2.make.com/w74s2h3fbypn8e7x6i7msitnx17ybglb";
     const MAKE_API_KEY = "super-secret-12345";
@@ -131,13 +142,16 @@
       // Use existing getMatchedLabelForValue to map
       const rows = irrData.map((d, i) => {
         const raw = (typeof d === 'object' && d !== null) ? d.irr : d;
-        const matched = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(raw) : null;
+  const matched = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(raw, i) : null;
+        // Determine token unit (prefer explicit unit on the entry)
+        const tokenUnit = (typeof d === 'object' && d !== null && d.unit) ? d.unit : (String(raw).includes('%') ? 'percent' : 'number');
         let matchedText = '';
-        if (matched) {
+        if (matched && tokenUnit !== 'percent') {
           if (matched.type === 'component') matchedText = matched.label;
           else if (matched.type === 'total') matchedText = `${matched.plantId || ''} ${matched.plantName || ''}`.trim() + (matched.isLowest ? ' (Lowest)' : '');
         }
-        return `<div class="flex justify-between"><div>Value ${i+1}</div><div class="font-mono">${escapeHtml(String(raw))}</div><div class="text-slate-300">${escapeHtml(matchedText)}</div></div>`;
+        const displayRaw = tokenUnit === 'percent' ? (Number(String(raw).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || raw).toFixed(4) + '%') : String(raw);
+        return `<div class="flex justify-between"><div>Value ${i+1}</div><div class="font-mono">${escapeHtml(displayRaw)}</div><div class="text-slate-300">${escapeHtml(matchedText)}</div></div>`;
       }).join('<hr/>');
       container.innerHTML = rows;
     }
@@ -321,6 +335,18 @@
       // Flatten components for quick numeric matching with metadata: [{value, label, type, plantId, plantName, material}]
       const pbComponents = [];
       const lowestTotalByMaterial = {};
+      // Canonical label map to normalize synonyms coming from widget parsing
+      const canonicalMap = {
+        'production cost': 'Production Cost',
+        'production': 'Production Cost',
+        'vendor price': 'Vendor Price',
+        'vendor': 'Vendor Price',
+        'transport cost': 'Transport Cost',
+        'transport': 'Transport Cost',
+        'holding cost': 'Holding Cost',
+        'holding': 'Holding Cost'
+      };
+
       pbList.forEach(entry => {
         const material = entry.material || '';
         const plantId = entry.plantId || '';
@@ -334,25 +360,142 @@
         }
         (entry.components || []).forEach(c => {
           if (c && (c.value !== null && c.value !== undefined)) {
-            pbComponents.push({ value: Number(c.value), label: c.label || String(c.value), type: 'component', plantId, plantName, material });
+            // normalize label using canonicalMap if possible
+            let lab = (c.label || String(c.value)).trim();
+            const key = String(lab).toLowerCase();
+            if (canonicalMap[key]) lab = canonicalMap[key];
+            const unit = c.unit || 'usd';
+            pbComponents.push({ value: Number(c.value), label: lab, type: 'component', plantId, plantName, material, unit });
           }
         });
       });
       const EPS = 1e-6;
+      // Build a one-to-one greedy pairing between visible numeric values and component values
+      // Greedy nearest-unused-component: for each visible numeric value (in any order), pick the closest unused component
+      const valueToComponentMap = (function buildPairing(irrList, comps){
+        // Global minimal-diff greedy matching:
+        // 1) build list of numeric visible values and component candidates
+        // 2) compute all pair diffs (abs difference)
+        // 3) sort pairs by diff asc
+        // 4) greedily assign lowest-diff pairs while enforcing one-to-one mapping
+        const map = {};
+        try {
+          const numericValues = [];
+          irrList.forEach((d,i) => {
+            const raw = (typeof d === 'object' && d !== null) ? d.irr : d;
+            const rawStr = String(raw || '');
+            // detect percent-like tokens: explicit '%' or labeled IRR entries in stored irrValues
+            let looksLikePercent = /%/.test(rawStr);
+            if (!looksLikePercent) {
+              try {
+                const stored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+                const entry = stored[i];
+                if (entry && typeof entry === 'object') {
+                  if (entry.raw && /%/.test(String(entry.raw))) looksLikePercent = true;
+                  if (entry.label && /irr/i.test(String(entry.label))) looksLikePercent = true;
+                  if (entry.irr && /%/.test(String(entry.irr))) looksLikePercent = true;
+                }
+              } catch (e) { /* ignore storage parse errors */ }
+            }
+            const numMatch = String(raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+            if (numMatch) {
+              // Skip percent-like tokens from pairing; they should not be matched to USD components
+              if (!looksLikePercent) {
+                // infer unit: try stored entry's unit if present, else 'number'
+                let valUnit = 'number';
+                try {
+                  const stored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+                  const e = stored[i]; if (e && e.unit) valUnit = e.unit;
+                } catch (e) { /* ignore */ }
+                numericValues.push({ idx: i, value: Number(numMatch[1]), unit: valUnit });
+              }
+            }
+          });
+          const compList = comps.map((c,ci) => Object.assign({ compIndex: ci, _used: false }, c)).filter(c => c && !isNaN(c.value) && c.type === 'component');
+          if (!numericValues.length || !compList.length) return map;
+          // Build all pairs
+          const pairs = [];
+          for (const v of numericValues) {
+            for (const c of compList) {
+              // require unit agreement for pairing: prefer unit-equal matches
+              const compUnit = c.unit || 'usd';
+              const valUnit = v.unit || 'number';
+              // Skip pairing percent-like values (we filtered those out before) but enforce unit equality for safety
+              if (valUnit && compUnit && valUnit !== 'number' && compUnit !== 'unknown' && valUnit !== compUnit) continue;
+              const diff = Math.abs(Number(c.value) - v.value);
+              pairs.push({ vIdx: v.idx, comp: c, diff, compUnit, valUnit });
+            }
+          }
+          // Sort pairs by smallest difference first
+          pairs.sort((a,b) => a.diff - b.diff);
+          const usedVals = new Set();
+          const usedComps = new Set();
+          const ABS_THRESHOLD = 0.5;
+          // Greedily assign best available pairs
+          for (const p of pairs) {
+            if (usedVals.has(p.vIdx) || usedComps.has(p.comp.compIndex)) continue;
+            // Accept only if within absolute threshold or within 5% relative threshold
+            const relThreshold = Math.abs(p.comp.value) * 0.05;
+            if (p.diff <= ABS_THRESHOLD || p.diff <= relThreshold) {
+              map[p.vIdx] = p.comp;
+              usedVals.add(p.vIdx);
+              usedComps.add(p.comp.compIndex);
+            }
+          }
+        } catch (e) { /* ignore pairing failures */ }
+        return map;
+      })(irrData, pbComponents);
       // helper: given a raw value (string or number), find a matching component label from pbComponents
       // Return a matched object for a numeric value: {label,type,plantId,plantName,material,isLowest}
-      function getMatchedLabelForValue(rawValue) {
+  function getMatchedLabelForValue(rawValue, valueIndex) {
         // rawValue may contain appended text (e.g. '6.60PL02 Silvassa...') — extract first numeric token
         if (rawValue === null || rawValue === undefined) return null;
         const str = String(rawValue).trim();
         const numMatch = str.match(/([0-9]+(?:\.[0-9]+)?)/);
         if (!numMatch) return null;
-        const num = parseFloat(numMatch[1]);
+  const num = parseFloat(numMatch[1]);
         if (isNaN(num)) return null;
+        // Heuristic: detect if the raw token looks like a percentage (contains '%')
+        // Also, if a valueIndex is provided, inspect the stored irrValues entry to see if it was a labeled IRR (e.g. entry.label contains 'IRR' or entry.raw contains '%')
+        const rawStr = String(rawValue);
+        let looksLikePercent = /%/.test(rawStr);
+        if (!looksLikePercent && typeof valueIndex === 'number') {
+          try {
+            const stored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+            const entry = stored[valueIndex];
+            if (entry && typeof entry === 'object') {
+              if (entry.raw && /%/.test(String(entry.raw))) looksLikePercent = true;
+              if (entry.label && /irr/i.test(String(entry.label))) looksLikePercent = true;
+              if (entry.irr && /%/.test(String(entry.irr))) looksLikePercent = true;
+            }
+          } catch (e) { /* ignore storage parse errors */ }
+        }
+        // Determine token unit from storage if available (percent/number)
+        let tokenUnit = 'number';
+        try {
+          const stored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+          const entry = stored[valueIndex];
+          if (entry && entry.unit) tokenUnit = entry.unit;
+          // fallback: if raw contains '%' mark as percent
+          if (entry && entry.raw && /%/.test(String(entry.raw))) tokenUnit = 'percent';
+        } catch (e) { /* ignore */ }
+
+        // If we have a precomputed mapping for this value index, prefer it
+        if (typeof valueIndex === 'number' && valueToComponentMap[valueIndex]) {
+          const mapped = valueToComponentMap[valueIndex];
+          if (mapped) return Object.assign({}, mapped);
+        }
         const candidates = [];
-        // numeric epsilon matches
+        // numeric epsilon matches (tolerant to small float issues) and two-decimal rounding
+        const target2 = Number(num).toFixed(2);
         for (const pc of pbComponents) {
+          const compUnit = pc.unit || 'usd';
+          // If token is percent and component is monetary, skip it
+          if (tokenUnit === 'percent' && compUnit === 'usd') continue;
+          // If both units are known and incompatible, skip
+          if (tokenUnit !== 'number' && compUnit !== 'unknown' && tokenUnit !== compUnit) continue;
           if (!isNaN(pc.value) && Math.abs(pc.value - num) < EPS) candidates.push(pc);
+          else if (!isNaN(pc.value) && Number(pc.value).toFixed(2) === target2) candidates.push(pc);
         }
         // fallback to formatted string comparison
         if (!candidates.length) {
@@ -363,40 +506,117 @@
             if (pstr === s2 || pstr === s4 || pstr === Number(pc.value).toFixed(2) || pstr === Number(pc.value).toFixed(4)) candidates.push(pc);
           }
         }
-        if (!candidates.length) return null;
-        // Prefer named components when available
-        const preferred = ["vendor price","production cost","transport cost","holding cost"];
-        for (const pref of preferred) {
-          const found = candidates.find(c => c && c.label && c.label.toLowerCase().includes(pref));
-          if (found) return Object.assign({}, found);
+        // If we have candidates from exact/two-decimal/formatted checks, use them
+        if (candidates.length) {
+          // Prefer named components when available (use canonical forms)
+          const preferred = ["Vendor Price","Production Cost","Transport Cost","Holding Cost"];
+          // Prefer candidates that match token unit first
+          const unitMatched = candidates.filter(c => ((c.unit || 'usd') === tokenUnit));
+          for (const pref of preferred) {
+            const found = (unitMatched.length ? unitMatched : candidates).find(c => c && c.label && c.label.toLowerCase() === pref.toLowerCase());
+            if (found) return Object.assign({}, found);
+          }
+          const fallbackPreferred = ["vendor","production","transport","holding"];
+          for (const fp of fallbackPreferred) {
+            const found = (unitMatched.length ? unitMatched : candidates).find(c => c && c.label && c.label.toLowerCase().includes(fp));
+            if (found) return Object.assign({}, found);
+          }
+          const comp = candidates.find(c => c.type === 'component');
+          if (comp) return Object.assign({}, comp);
+          const tot = Object.assign({}, candidates[0]);
+          if (tot && tot.type === 'total') {
+            tot.isLowest = (typeof lowestTotalByMaterial[tot.material] !== 'undefined' && Math.abs(tot.value - lowestTotalByMaterial[tot.material]) < EPS);
+          }
+          return tot;
         }
-        // prefer component over total
-        const comp = candidates.find(c => c.type === 'component');
-        if (comp) return Object.assign({}, comp);
-        // otherwise pick total but annotate if it's the lowest for its material
-        const tot = Object.assign({}, candidates[0]);
-        if (tot && tot.type === 'total') {
-          tot.isLowest = (typeof lowestTotalByMaterial[tot.material] !== 'undefined' && Math.abs(tot.value - lowestTotalByMaterial[tot.material]) < EPS);
+        // Nearest-neighbor fallback: consider all pbComponents and pick the closest value
+        if (pbComponents.length) {
+          let best = null;
+          let bestDiff = Infinity;
+          for (const pc of pbComponents) {
+            if (isNaN(pc.value)) continue;
+            const diff = Math.abs(Number(pc.value) - num);
+            if (diff < bestDiff) { bestDiff = diff; best = pc; }
+          }
+          if (best) {
+            // Accept if difference within absolute 0.25 or within 5% relative
+            const absThreshold = 0.25;
+            const relThreshold = Math.abs(num) * 0.05;
+            if (bestDiff <= absThreshold || bestDiff <= relThreshold) {
+              return Object.assign({}, best);
+            }
+          }
         }
-        return tot;
+        return null;
       }
+
+      // Developer diagnostic: dump candidate matches and scoring for each Value N
+      function dumpMatchDiagnostics(irrData) {
+        try {
+          const out = [];
+          const pbList = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+          out.push('Parsed priceBreakdowns: ' + JSON.stringify(pbList, null, 2));
+          out.push('Flattened pbComponents: ' + JSON.stringify(pbComponents, null, 2));
+          (irrData || JSON.parse(localStorage.getItem('irrValues') || '[]')).forEach((d, i) => {
+            const raw = (typeof d === 'object' && d !== null) ? d.irr : d;
+            out.push(`--- Value ${i+1}: raw='${raw}'`);
+            const numMatch = String(raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+            const num = numMatch ? Number(numMatch[1]) : null;
+            out.push(' numeric token: ' + String(num));
+            const candidates = pbComponents.filter(pc => !isNaN(pc.value) && Math.abs(Number(pc.value) - (num || 0)) < 1e-6);
+            out.push(' candidates: ' + JSON.stringify(candidates, null, 2));
+            const matched = getMatchedLabelForValue(raw, i);
+            out.push(' chosen match: ' + JSON.stringify(matched, null, 2));
+          });
+          document.getElementById('devMatchOutput').textContent = out.join('\n\n');
+          console.debug('Dump Matches:', out.join('\n\n'));
+        } catch (e) { console.error('dumpMatchDiagnostics error', e); }
+      }
+
+      // Wire up dev panel toggle and Dump Matches button
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'D' || e.key === 'd') {
+          const p = document.getElementById('devMatchPanel');
+          if (p.style.display === 'none' || !p.style.display) p.style.display = 'block'; else p.style.display = 'none';
+        }
+      });
+      document.getElementById('dumpMatchesBtn').addEventListener('click', () => dumpMatchDiagnostics());
+      document.getElementById('closeDevPanel').addEventListener('click', () => { document.getElementById('devMatchPanel').style.display = 'none'; });
 
       irrMetricCards.innerHTML = irrData.map((d, i) => {
         let rawValue = (typeof d === 'object' && d !== null) ? d.irr : d;
         let num = parseFloat(rawValue);
-        let label = (typeof d === 'object' && d !== null) ? (d.year ? `Year ${d.year}` : (d.label ? d.label : `Value ${i+1}`)) : `Value ${i+1}`;
-        let icon = '<span class="metric-icon">📈</span>';
+        // Determine token unit: prefer explicit unit on the irrData entry
+        const tokenUnit = (typeof d === 'object' && d !== null && d.unit) ? d.unit : (String(rawValue).includes('%') ? 'percent' : 'number');
+        // Compute label: for percent tokens show only the numeric percent (remove generic 'Value N')
+        let label;
+        if (typeof d === 'object' && d !== null) {
+          if (d.year) label = `Year ${d.year}`;
+          else if (d.label) label = d.label;
+          else if (tokenUnit === 'percent') label = !isNaN(num) ? (Number(num).toFixed(4) + '%') : `Value ${i+1}`;
+          else label = `Value ${i+1}`;
+        } else {
+          label = tokenUnit === 'percent' ? (!isNaN(num) ? (Number(num).toFixed(4) + '%') : `Value ${i+1}`) : `Value ${i+1}`;
+        }
+        // Only show the trend icon for percent/IRR tokens. Hide for monetary/component values.
+        let icon = tokenUnit === 'percent' ? '<span class="metric-icon">📈</span>' : '';
         const matched = getMatchedLabelForValue(rawValue);
         // Determine if the existing label is generic: Value N, empty, or numeric-only
         const isGenericLabel = (/^Value \d+$/.test(label)) || label.trim() === '' || (/^[0-9]+(?:\.[0-9]+)?$/.test(String(label).trim()));
         const rawHasExtra = String(rawValue).trim().match(/^[0-9]+(?:\.[0-9]+)?\s*$/) ? false : true;
+
+        // If token is percent, always show only the percent value and do not attach matched labels
+        if (tokenUnit === 'percent') {
+          const displayVal = (!isNaN(num) ? Number(num).toFixed(4) + '%' : String(rawValue));
+          return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(displayVal)}</div></div></div>`;
+        }
 
         if (matched && (isGenericLabel || rawHasExtra)) {
           // Prefer component label formatting with explicit numeric value
           if (matched.type === 'component') {
             const displayVal = (!isNaN(num) ? Number(num).toFixed(2) : (matched.value !== undefined ? Number(matched.value).toFixed(2) : String(rawValue)));
             label = `${matched.label}`;
-            // render as: Title / $value / small subtext (label)
+            // For monetary components, don't show the percent/trend icon; show value and small label
             return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div><span class="font-mono">$${displayVal}</span></div><div class="text-xs text-slate-300">${escapeHtml(matched.label || '')}</div></div></div>`;
           }
           // For totals, show plant name/ID and annotate lowest
@@ -409,7 +629,7 @@
           }
         }
 
-        // If matched but original label was not generic, append small matched info beneath
+        // If matched but original label was not generic, append small matched info beneath (only for non-percent tokens)
         if (matched) {
           const extra = matched.type === 'total' ? `${matched.plantId || ''} ${matched.plantName || ''}`.trim() : matched.label;
           return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(String(rawValue))}${extra ? `<div class="text-xs text-slate-300">${escapeHtml(extra)}</div>` : ''}</div></div></div>`;
@@ -452,8 +672,11 @@
       irrData.forEach((d, i) => {
         let value = (typeof d === 'object' && d !== null) ? d.irr : d;
         let label = labels[i];
-        const matchedObj = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value) : null;
-        if (matchedObj && /^Value \d+$/.test(label)) {
+        // Determine token unit (prefer explicit unit on stored entry)
+        const tokenUnit = (typeof d === 'object' && d !== null && d.unit) ? d.unit : (String(value).includes('%') ? 'percent' : 'number');
+        const matchedObj = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value, i) : null;
+        // Only replace generic Value N labels with matched names for non-percent tokens
+        if (matchedObj && /^Value \d+$/.test(label) && tokenUnit !== 'percent') {
           if (matchedObj.type === 'component') {
             const numVal = parseFloat(String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || value);
             label = `${matchedObj.label} ($${Number(numVal).toFixed(2)})`;
@@ -463,14 +686,14 @@
             label = `${plantTitle} has a total cost of $${Number(numVal).toFixed(2)}` + (matchedObj.isLowest ? ' (Lowest)' : '');
           }
         }
-  // Format numeric values as currency if they look like monetary values
-  const numericToken = String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
-  const isMoney = numericToken !== undefined;
-  const displayNum = isMoney ? `$${Number(numericToken).toFixed(2)}` : escapeHtml(String(value));
-  // include small extra line showing matched label/plant if available
-  const mapped = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value) : null;
-  const extraLine = mapped ? `<div class="text-xs text-slate-300">${escapeHtml(mapped.type === 'total' ? `${mapped.plantName || mapped.plantId}` : mapped.label)}</div>` : '';
-  rows.push(`<tr><td class="border border-white/20 px-4 py-2">${escapeHtml(label)}</td><td class="border border-white/20 px-4 py-2">${displayNum}${extraLine}</td></tr>`);
+        // Format display value: percent tokens get 4-decimal percent formatting; others that look like money get currency
+        const numericToken = String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
+        const isMoney = numericToken !== undefined && tokenUnit !== 'percent';
+        const displayNum = tokenUnit === 'percent' ? (numericToken ? (Number(numericToken).toFixed(4) + '%') : escapeHtml(String(value))) : (isMoney ? `$${Number(numericToken).toFixed(2)}` : escapeHtml(String(value)));
+        // include small extra line showing matched label/plant if available, but suppress for percent tokens
+        const mapped = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue(value, i) : null;
+        const extraLine = (mapped && tokenUnit !== 'percent') ? `<div class="text-xs text-slate-300">${escapeHtml(mapped.type === 'total' ? `${mapped.plantName || mapped.plantId}` : mapped.label)}</div>` : '';
+        rows.push(`<tr><td class="border border-white/20 px-4 py-2">${escapeHtml(label)}</td><td class="border border-white/20 px-4 py-2">${displayNum}${extraLine}</td></tr>`);
       });
       tbody.innerHTML = rows.join('');
       // Last Updated Timestamp
@@ -617,7 +840,10 @@
     if (event.key === 'irrValues') {
       updateDashboardFromStorage();
     }
-    // storage listener: only respond to irrValues here
+    if (event.key === 'priceBreakdowns') {
+      // Re-render so new components are available for mapping
+      updateDashboardFromStorage();
+    }
   });
 
     // Also accept direct postMessage updates from the widget (more dynamic than polling storage)
@@ -627,9 +853,8 @@
         if (evt.data.type === 'priceBreakdowns' && evt.data.data) {
           // Persist incoming price breakdowns so matching logic has the latest components
           try { localStorage.setItem('priceBreakdowns', JSON.stringify(evt.data.data)); } catch (e) { console.error('Failed to save priceBreakdowns', e); }
-          // Recompute mappings if IRR values are present
-          const stored = localStorage.getItem('irrValues');
-          if (stored) renderValueMappings(JSON.parse(stored));
+          // Re-run full dashboard render so pbComponents are recomputed and mappings apply
+          updateDashboardFromStorage();
         }
         if (evt.data.type === 'irrData' && evt.data.data) {
           try { localStorage.setItem('irrValues', JSON.stringify(evt.data.data)); } catch (e) {}

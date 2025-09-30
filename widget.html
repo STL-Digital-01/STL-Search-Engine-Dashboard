@@ -209,7 +209,7 @@
           // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates 
           let irrValues = [];
           const seenIRR = new Set();
-          // 1. Year-based IRRs: '0.1514 for 2 years', '0.1514% (2 years)', etc.
+          // 1. Year-based IRRs: e.g. '0.1514 for 2 years' or '0.1514% (2 years)'
           const irrForYearRegex = /([0-9]+\.[0-9]+%?)\s*for\s*(\d+) years?/gi;
           let forYearMatch;
           while ((forYearMatch = irrForYearRegex.exec(answerText)) !== null) {
@@ -228,7 +228,7 @@
               seenIRR.add(key);
             }
           }
-          // 2. IRR with labels: '0.1160% (Base IRR)', '0.1417 (Project IRR)', etc.
+          // 2. IRR with labels: e.g. '0.1160% (Base IRR)' or '0.XXXX (Project IRR)'
           const irrLabelRegex = /([0-9]+\.[0-9]+%?)\s*\(([^)]+IRR)\)/gi;
           let labelMatch;
           while ((labelMatch = irrLabelRegex.exec(answerText)) !== null) {
@@ -343,57 +343,233 @@
             }
             return true;
           });
-          localStorage.setItem('irrValues', JSON.stringify(finalIRRs));
+          // Persist price breakdowns first (enhanced parsing)
           try {
-            const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
-            if(dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: irrValues }, '*');
-          } catch(e) { /* silent fail */ }
-
-          // --- New: parse price breakdowns and labeled cost components from answer text ---
-          try {
-            // Example sentence patterns handled:
-            // "For material 100001, Silvassa Plant (PL02) offers the lowest total per-unit cost at $6.70. This is calculated as Vendor Price ($1.10) + Production Cost ($4.80) + Transport Cost ($0.70) + Holding Cost ($0.10)."
+            // Load existing
             const priceBreakdowns = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
-            const pricePattern = /For\s+material\s+(\d+),\s*([^\(]+?)\s*\((PL\d+)\)\s*offers the lowest total per-unit cost at\s*\$?([0-9]+\.[0-9]+)/i;
-            const priceMatch = pricePattern.exec(answerText);
-            if (priceMatch) {
+
+            // 1) Plant-named total + calculated components (existing pattern)
+            const pricePattern = /For\s+material\s+(\d+),\s*([^\(]+?)\s*\((PL\d+)\)\s*offers the lowest total per-unit cost at\s*\$?([0-9]+\.[0-9]+)/ig;
+            let priceMatch;
+            while ((priceMatch = pricePattern.exec(answerText)) !== null) {
               const material = priceMatch[1];
               const plantName = priceMatch[2].trim();
               const plantId = priceMatch[3];
               const totalCost = parseFloat(priceMatch[4]);
-
-              // Look for the 'calculated as' clause and split components by '+'
-              const calcMatch = /calculated as\s*([^\.]*)/i.exec(answerText);
               const components = [];
+              const calcMatch = /calculated as\s*([^\.]*)/i.exec(answerText);
               if (calcMatch && calcMatch[1]) {
                 const parts = calcMatch[1].split('+').map(p => p.trim()).filter(Boolean);
                 parts.forEach(p => {
-                  // Try to capture labeled component: Label ($x.xx)
                   const labeled = /([A-Za-z0-9 \-\/]+?)\s*\(\$?([0-9]+\.[0-9]+)\)/i.exec(p);
-                  if (labeled) {
-                    components.push({ label: labeled[1].trim(), value: parseFloat(labeled[2]) });
-                  } else {
-                    // If no label, try to capture numeric value and use it as label per request
+                  if (labeled) components.push({ label: labeled[1].trim(), value: parseFloat(labeled[2]) });
+                  else {
                     const valOnly = /\$?([0-9]+\.[0-9]+)/.exec(p);
-                    if (valOnly) {
-                      components.push({ label: valOnly[1], value: parseFloat(valOnly[1]) });
-                    } else {
-                      // fallback: store raw part as label with null value
-                      components.push({ label: p, value: null });
-                    }
+                    if (valOnly) components.push({ label: valOnly[1], value: parseFloat(valOnly[1]) });
+                    else components.push({ label: p, value: null });
                   }
                 });
               }
+              // sanitize component labels and values (handle cases like 'Vendor Price ($1')
+              const sanitizedComponents = components.map(c => {
+                let lab = (c.label || '').trim();
+                // extract numeric inside parentheses if present and value missing
+                if ((c.value === null || c.value === undefined) && /\$?([0-9]+\.[0-9]+)/.test(lab)) {
+                  const m = /\$?([0-9]+\.[0-9]+)/.exec(lab);
+                  if (m) {
+                    c.value = parseFloat(m[1]);
+                    // remove the numeric portion and stray parentheses from label
+                    lab = lab.replace(/\(?\$?[0-9]+\.[0-9]+\)?/g, '').trim();
+                  }
+                }
+                // clean trailing punctuation
+                lab = lab.replace(/[\(\),:\.]+$/g, '').trim();
+                const val = (c.value !== null && c.value !== undefined) ? Number(c.value) : null;
+                const unit = val !== null ? 'usd' : 'unknown';
+                return { label: lab || String(val || ''), value: val, unit };
+              });
 
-              priceBreakdowns.push({ material, plantName, plantId, totalCost, components, timestamp: Date.now() });
-              localStorage.setItem('priceBreakdowns', JSON.stringify(priceBreakdowns));
-              try {
-                const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
-                if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'priceBreakdowns', data: priceBreakdowns }, '*');
-              } catch (e) { /* silent */ }
+              // avoid pushing duplicates: check for existing entry with same material+plantId+total+components signature
+              const compSig = JSON.stringify(sanitizedComponents.map(x => ({label: x.label, value: x.value})));
+              const exists = priceBreakdowns.find(pb => pb.material === material && pb.plantId === plantId && Number(pb.totalCost) === Number(totalCost) && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value}))) === compSig);
+              if (!exists) priceBreakdowns.push({ material, plantName, plantId, totalCost, components: sanitizedComponents, timestamp: Date.now() });
             }
+
+            // 2) Component-only per-material sentences, including multi-material lists and raw material cost units (INR/ton)
+            // Examples handled:
+            // "For material 100001, 100002, and 100003, the production cost is 363.526..."
+            // "The Cost Of Production is 34585.5359."
+            // "Raw material costs include RSMM rock at 5722.2222 INR/ton and Jordan rock at 8808.2840 INR/ton."
+            const materialListPattern = /For\s+material[s]?\s+((?:\d+\s*(?:,|and)?\s*)+),\s*([^\.]*)(?:\.|$)/ig;
+            let listMatch;
+            while ((listMatch = materialListPattern.exec(answerText)) !== null) {
+              const matsRaw = listMatch[1];
+              const sentence = listMatch[2];
+              const materials = matsRaw.split(/(?:,|\band\b)/i).map(s => s.trim()).filter(Boolean);
+              // Known component label patterns (monetary)
+              const compRegex = /(production cost|vendor price|transport cost|holding cost|production|vendor|transport|holding|vendor cost|cost of production)\s*(?:is|:|=)?\s*\$?([0-9]+(?:\.[0-9]+)?)/ig;
+              const compLabelRegex = /([A-Za-z0-9 \-]{3,60}?)\s*(?:is|:|=)?\s*\$?([0-9]+(?:\.[0-9]+)?)/ig;
+              // Raw material INR/ton pattern
+              const rawMatRegex = /([A-Za-z0-9 \-]+?)\s+at\s+([0-9]+(?:\.[0-9]+)?)\s*INR\/ton/ig;
+              const components = [];
+              let foundAny = false;
+              let mMatch;
+              // first, explicit known labels
+              while ((mMatch = compRegex.exec(sentence)) !== null) {
+                let rawLabel = (mMatch[1] || 'Component').trim();
+                const value = parseFloat(mMatch[2]);
+                rawLabel = rawLabel.replace(/^production$/i, 'Production Cost')
+                                     .replace(/^vendor$/i, 'Vendor Price')
+                                     .replace(/^transport$/i, 'Transport Cost')
+                                     .replace(/^holding$/i, 'Holding Cost')
+                                     .replace(/vendor cost/i, 'Vendor Price')
+                                     .replace(/cost of production/i, 'Cost Of Production');
+                components.push({ label: capitalizeLabel(rawLabel), value, unit: 'usd' });
+                foundAny = true;
+              }
+              // next, raw material INR/ton entries
+              while ((mMatch = rawMatRegex.exec(sentence)) !== null) {
+                const rawLabel = (mMatch[1] || '').trim();
+                const value = parseFloat(mMatch[2]);
+                if (rawLabel) {
+                  components.push({ label: capitalizeLabel(rawLabel), value, unit: 'inr_per_ton' });
+                  foundAny = true;
+                }
+              }
+              // fallback generic extraction only if labels present (do not invent labels)
+              if (!foundAny) {
+                let gMatch;
+                while ((gMatch = compLabelRegex.exec(sentence)) !== null) {
+                  const rawLabel = (gMatch[1] || '').trim();
+                  const val = parseFloat(gMatch[2]);
+                  // Only accept if rawLabel appears reasonably like a label (contains letters)
+                  if (/[A-Za-z]/.test(rawLabel)) {
+                    components.push({ label: capitalizeLabel(rawLabel), value: val, unit: 'usd' });
+                    foundAny = true;
+                  }
+                }
+              }
+              if (foundAny && components.length) {
+                // compute totalCost only if sentence explicitly gives an aggregate or if components can be summed
+                const sum = components.reduce((s, c) => s + (c.value || 0), 0);
+                const maybeTotal = /(?:total cost|cost of production|total per-unit cost|total cost is)\s*(?:is|:|=)?\s*\$?([0-9]+(?:\.[0-9]+)?)/i.exec(sentence);
+                const totalCost = maybeTotal ? parseFloat(maybeTotal[1]) : (sum || null);
+                // push an entry per material found
+                materials.forEach(material => {
+                  const sanitizedComponents = components.map(c => ({ label: (c.label||'').replace(/[\(\),:\.]+$/g,'').trim(), value: (c.value !== null && c.value !== undefined) ? Number(c.value) : null, unit: c.unit || (c.value !== null ? 'usd' : 'unknown') }));
+                  const compSig = JSON.stringify(sanitizedComponents.map(x => ({label: x.label, value: x.value, unit: x.unit})));
+                  const exists = priceBreakdowns.find(pb => pb.material === material && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value,unit:x.unit}))) === compSig);
+                  if (!exists) priceBreakdowns.push({ material, plantName: '', plantId: '', totalCost, components: sanitizedComponents, timestamp: Date.now() });
+                });
+              }
+            }
+
+            // single-material fallback (existing behavior)
+            const materialSentencePattern = /For\s+material\s+(\d+),\s*([^\.]*)(?:\.|$)/ig;
+            let matMatch;
+            while ((matMatch = materialSentencePattern.exec(answerText)) !== null) {
+              const material = matMatch[1];
+              const sentence = matMatch[2];
+              // find all label/value pairs inside the sentence
+              // First try explicit known component labels like 'production cost' or 'vendor price'
+              const compRegex = /(production cost|vendor price|transport cost|holding cost|production|vendor|transport|holding|vendor cost)\s*(?:is|:|=)?\s*\$?([0-9]+\.[0-9]+)/ig;
+              const compLabelRegex = /([A-Za-z ]{3,40}?)\s*(?:is|:|=)?\s*\$?([0-9]+\.[0-9]+)/ig;
+              const components = [];
+              let foundAny = false;
+              let cMatch;
+              while ((cMatch = compRegex.exec(sentence)) !== null) {
+                let rawLabel = (cMatch[1] || 'Component').trim();
+                const value = parseFloat(cMatch[2]);
+                // normalize common short forms to canonical labels
+                rawLabel = rawLabel.replace(/^production$/i, 'Production Cost')
+                                     .replace(/^vendor$/i, 'Vendor Price')
+                                     .replace(/^transport$/i, 'Transport Cost')
+                                     .replace(/^holding$/i, 'Holding Cost')
+                                     .replace(/vendor cost/i, 'Vendor Price');
+                components.push({ label: capitalizeLabel(rawLabel), value });
+                foundAny = true;
+              }
+              // fallback generic extraction of "Label $x.xx" pairs
+              if (!foundAny) {
+                while ((cMatch = compLabelRegex.exec(sentence)) !== null) {
+                  const rawLabel = (cMatch[1] || 'Component').trim();
+                  const value = parseFloat(cMatch[2]);
+                  // only accept if rawLabel contains letters (avoid bare numbers)
+                  if (/[A-Za-z]/.test(rawLabel)) {
+                    components.push({ label: capitalizeLabel(rawLabel), value });
+                    foundAny = true;
+                  }
+                }
+              }
+              if (foundAny) {
+                const totalCost = components.reduce((s, c) => s + (c.value || 0), 0);
+                  // sanitize components similar to above
+                  const sanitizedComponents = components.map(c => {
+                    const lab = (c.label||'').replace(/[\(\),:\.]+$/g,'').trim() || String(c.value || '');
+                    const val = (c.value !== null && c.value !== undefined) ? Number(c.value) : null;
+                    const unit = val !== null ? 'usd' : 'unknown';
+                    return { label: lab, value: val, unit };
+                  });
+                  const compSig = JSON.stringify(sanitizedComponents.map(x => ({label: x.label, value: x.value})));
+                  const exists = priceBreakdowns.find(pb => pb.material === material && (!pb.plantId || pb.plantId === '') && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value}))) === compSig);
+                  if (!exists) priceBreakdowns.push({ material, plantName: '', plantId: '', totalCost, components: sanitizedComponents, timestamp: Date.now() });
+              }
+            }
+
+            // final cleanup: dedupe by material+plantId+total+components signature
+            const cleaned = [];
+            const seenSigs = new Set();
+            priceBreakdowns.forEach(pb => {
+              const sig = JSON.stringify({ material: pb.material, plantId: pb.plantId || '', total: Number(pb.totalCost || 0), comps: (pb.components||[]).map(c=>({label:c.label,value:c.value})) });
+              if (!seenSigs.has(sig)) {
+                seenSigs.add(sig);
+                cleaned.push(pb);
+              }
+            });
+            // remove empty-component entries if a total exists for same material+plantId (prefer entries with components)
+            const finalList = [];
+            const totalsIndex = {};
+            cleaned.forEach(pb => {
+              const key = `${pb.material}::${pb.plantId || ''}::${Number(pb.totalCost || 0)}`;
+              if ((pb.components||[]).length) {
+                totalsIndex[key] = true;
+                finalList.push(pb);
+              } else {
+                // keep only if no component-bearing entry exists for same key
+                if (!totalsIndex[key]) finalList.push(pb);
+              }
+            });
+            localStorage.setItem('priceBreakdowns', JSON.stringify(finalList));
+            try {
+              const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
+              if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'priceBreakdowns', data: JSON.parse(localStorage.getItem('priceBreakdowns') || '[]') }, '*');
+            } catch (e) { /* silent */ }
           } catch (e) {
             console.error('Price breakdown parse error', e);
+          }
+
+          // Persist all parsed IRR values (do not filter numeric-only entries here)
+          try {
+            // Attach 'unit' metadata: percent if token contains '%', or context implies IRR, else 'number'
+            const annotated = finalIRRs.map(v => {
+              try {
+                const raw = (typeof v === 'object' && v !== null) ? (v.raw || v.irr || '') : String(v);
+                // Check context: if the assistant's answerText mentions 'IRR' or similar, prefer percent
+                const contextIndicatesIRR = /\birr\b/i.test(answerText) || /internal rate of return/i.test(answerText.toLowerCase());
+                let unit = 'number';
+                if (/%/.test(String(raw))) unit = 'percent';
+                else if (contextIndicatesIRR && parseFloat(String(raw)) > 0 && Math.abs(parseFloat(String(raw))) < 1) unit = 'percent';
+                else if (/irr/i.test(String(v.label || ''))) unit = 'percent';
+                return Object.assign({}, v, { unit });
+              } catch (e) { return v; }
+            });
+            localStorage.setItem('irrValues', JSON.stringify(annotated));
+            try {
+              const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
+              if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: annotated }, '*');
+            } catch (e) { /* silent */ }
+          } catch (e) {
+            console.error('Failed to persist irrValues', e);
           }
           let citeHtml = '';
           if(answerText){
@@ -453,6 +629,12 @@
       // Utility to escape HTML
       function escapeHtml(str){
         return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+      }
+
+      // Helper to normalize/capitalize component labels
+      function capitalizeLabel(s){
+        if(!s) return '';
+        return String(s).trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
       }
     })();
   </script>
