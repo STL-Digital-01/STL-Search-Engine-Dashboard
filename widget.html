@@ -386,7 +386,7 @@
                 lab = lab.replace(/[\(\),:\.]+$/g, '').trim();
                 const val = (c.value !== null && c.value !== undefined) ? Number(c.value) : null;
                 const unit = val !== null ? 'usd' : 'unknown';
-                return { label: lab || String(val || ''), value: val, unit };
+                return { label: lab || String(val || ''), value: val, unit, source: 'paired' };
               });
 
               // avoid pushing duplicates: check for existing entry with same material+plantId+total+components signature
@@ -456,7 +456,7 @@
                 const totalCost = maybeTotal ? parseFloat(maybeTotal[1]) : (sum || null);
                 // push an entry per material found
                 materials.forEach(material => {
-                  const sanitizedComponents = components.map(c => ({ label: (c.label||'').replace(/[\(\),:\.]+$/g,'').trim(), value: (c.value !== null && c.value !== undefined) ? Number(c.value) : null, unit: c.unit || (c.value !== null ? 'usd' : 'unknown') }));
+                  const sanitizedComponents = components.map(c => ({ label: (c.label||'').replace(/[\(\),:\.]+$/g,'').trim(), value: (c.value !== null && c.value !== undefined) ? Number(c.value) : null, unit: c.unit || (c.value !== null ? 'usd' : 'unknown'), source: 'paired' }));
                   const compSig = JSON.stringify(sanitizedComponents.map(x => ({label: x.label, value: x.value, unit: x.unit})));
                   const exists = priceBreakdowns.find(pb => pb.material === material && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value,unit:x.unit}))) === compSig);
                   if (!exists) priceBreakdowns.push({ material, plantName: '', plantId: '', totalCost, components: sanitizedComponents, timestamp: Date.now() });
@@ -508,7 +508,7 @@
                     const lab = (c.label||'').replace(/[\(\),:\.]+$/g,'').trim() || String(c.value || '');
                     const val = (c.value !== null && c.value !== undefined) ? Number(c.value) : null;
                     const unit = val !== null ? 'usd' : 'unknown';
-                    return { label: lab, value: val, unit };
+                    return { label: lab, value: val, unit, source: 'paired' };
                   });
                   const compSig = JSON.stringify(sanitizedComponents.map(x => ({label: x.label, value: x.value})));
                   const exists = priceBreakdowns.find(pb => pb.material === material && (!pb.plantId || pb.plantId === '') && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value}))) === compSig);
@@ -548,6 +548,133 @@
             console.error('Price breakdown parse error', e);
           }
 
+          // ----- New pass: explicit label($value) pairs -----
+          // If the assistant wrote labels in the form "Transport Cost ($0.70)", use
+          // those labels to tag matching components in priceBreakdowns and annotate
+          // finalIRRs entries so the dashboard can show the correct label and unit.
+          try {
+            const labelValRegex = /([A-Za-z0-9 \-\/]{2,80}?)\s*\(\$?([0-9]+(?:\.[0-9]+)?)\)/g;
+            const pb = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+            const pairs = [];
+            let m;
+            while ((m = labelValRegex.exec(answerText)) !== null) {
+              const rawLabel = (m[1] || '').trim();
+              const num = Number(m[2]);
+              if (!rawLabel || isNaN(num)) continue;
+              const normLabel = capitalizeLabel(rawLabel.replace(/[\(\),:\.]+$/g,'').trim());
+              pairs.push({ label: normLabel, value: num });
+              // tag matching components in pb
+              (pb || []).forEach(entry => {
+                (entry.components || []).forEach(c => {
+                  try {
+                    if (c && c.value !== null && c.value !== undefined && Math.abs(Number(c.value) - num) < 1e-6) {
+                      c.label = normLabel; // prefer assistant label
+                      c.source = c.source || 'paired';
+                    }
+                  } catch (e) { /* per-component ignore */ }
+                });
+                // if a plant total matches this numeric, we don't override total label but keep association
+              });
+            }
+            // Additional pass: label on one line and numeric on following line(s).
+            // Handles assistant outputs like:
+            // Production Cost\n5.00\nVendor Price\n1.00
+            try {
+              const lines = String(answerText || '').split(/\r?\n/);
+              for (let i = 0; i < lines.length; i++) {
+                const a = (lines[i] || '').trim();
+                if (!a || !/[A-Za-z]/.test(a)) continue;
+                // look ahead up to 2 lines for a numeric value
+                let foundNum = null;
+                for (let j = 1; j <= 2 && i + j < lines.length; j++) {
+                  const cand = (lines[i + j] || '').trim();
+                  if (!cand) continue;
+                  const nm = cand.match(/^\$?([0-9]+(?:\.[0-9]+)?)/);
+                  if (nm) { foundNum = Number(nm[1]); break; }
+                }
+                if (foundNum === null) continue;
+                const normLabel = capitalizeLabel(a.replace(/[\(\),:\.]+$/g,'').trim());
+                // avoid duplicates: only push if not already present
+                if (!pairs.some(p => p.label === normLabel && Math.abs(p.value - foundNum) < 1e-6)) {
+                  pairs.push({ label: normLabel, value: foundNum });
+                  (pb || []).forEach(entry => {
+                    (entry.components || []).forEach(c => {
+                      try {
+                        if (c && c.value !== null && c.value !== undefined && Math.abs(Number(c.value) - foundNum) < 1e-6) {
+                          c.label = normLabel;
+                          c.source = c.source || 'paired';
+                        }
+                      } catch (e) { /* per-component ignore */ }
+                    });
+                  });
+                }
+              }
+            } catch (e) { /* ignore extra-pass errors */ }
+            if (pairs.length) localStorage.setItem('priceBreakdowns', JSON.stringify(pb));
+            // If we have a nearby material list like 'For material 100001, 100002, 100003'
+            // followed by a sequence of label/value pairs, try to assign the pairs
+            // to materials in order (chunked) so the dashboard can map Value N -> correct material.
+            try {
+              const materialListMatch = /For\s+material[s]?\s+((?:\d+\s*(?:,|and)?\s*)+)/i.exec(answerText);
+              if (materialListMatch) {
+                const matsRaw = materialListMatch[1];
+                const materials = matsRaw.split(/(?:,|\band\b)/i).map(s => s.trim()).filter(Boolean);
+                if (materials.length) {
+                  // find label/value pairs that occur after the material list (within next 1000 chars)
+                  const startIdx = materialListMatch.index + materialListMatch[0].length;
+                  const tail = answerText.slice(startIdx, startIdx + 1000);
+                  const pairRegex = /([A-Za-z0-9 \-\/]{2,80}?)\s*\(?\$?([0-9]+(?:\.[0-9]+)?)\)?/g;
+                  const tailPairs = [];
+                  let pm;
+                  while ((pm = pairRegex.exec(tail)) !== null) {
+                    const rl = (pm[1] || '').trim();
+                    const nv = Number(pm[2]);
+                    if (!rl || isNaN(nv)) continue;
+                    // skip if rl looks like a sentence connector (short words)
+                    if (/^(for|and|the|is|of|offers)$/i.test(rl)) continue;
+                    tailPairs.push({ label: capitalizeLabel(rl.replace(/[\(\),:\.]+$/g,'').trim()), value: nv });
+                  }
+                  // If we discovered pairs and they evenly map to materials, chunk them
+                  if (tailPairs.length && tailPairs.length % materials.length === 0) {
+                    const chunkSize = tailPairs.length / materials.length;
+                    const storedPB = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+                    for (let mi = 0; mi < materials.length; mi++) {
+                      const mat = materials[mi];
+                      const comps = tailPairs.slice(mi * chunkSize, (mi + 1) * chunkSize).map(p => ({ label: p.label, value: p.value, unit: 'usd', source: 'paired' }));
+                      // compute total as sum
+                      const total = comps.reduce((s, c) => s + (c.value || 0), 0) || null;
+                      // avoid duplicates: match by signature
+                      const sig = JSON.stringify(comps.map(c => ({label: c.label, value: c.value})));
+                      const exists = storedPB.find(pb => pb.material === mat && JSON.stringify((pb.components||[]).map(x=>({label:x.label,value:x.value}))) === sig);
+                      if (!exists) storedPB.push({ material: mat, plantName: '', plantId: '', totalCost: total, components: comps, timestamp: Date.now() });
+                    }
+                    localStorage.setItem('priceBreakdowns', JSON.stringify(storedPB));
+                  }
+                }
+              }
+            } catch (e) { /* ignore grouping errors */ }
+            // annotate finalIRRs (if present) with matching labels/units
+            if (typeof finalIRRs !== 'undefined' && Array.isArray(finalIRRs) && pairs.length) {
+              finalIRRs.forEach(fr => {
+                try {
+                  const raw = String(fr && (fr.raw || fr.irr || '') || '');
+                  const m2 = raw.match(/([0-9]+(?:\.[0-9]+)?)/);
+                  const val = m2 ? Number(m2[1]) : NaN;
+                  if (isNaN(val)) return;
+                  pairs.forEach(p => {
+                    if (Math.abs(p.value - val) < 1e-6) {
+                      fr.unit = 'usd';
+                      fr.label = fr.label || p.label;
+                      fr.source = fr.source || 'paired';
+                      fr.raw = String(Number(p.value).toFixed(2));
+                      fr.irr = fr.raw;
+                    }
+                  });
+                } catch (e) { /* ignore per-entry */ }
+              });
+            }
+          } catch (e) { /* non-fatal */ }
+
           // Persist all parsed IRR values (do not filter numeric-only entries here)
           try {
             // Attach 'unit' metadata: percent if token contains '%', or context implies IRR, else 'number'
@@ -559,9 +686,31 @@
                 const contextIndicatesIRR = /\birr\b/i.test(answerText) || /internal rate of return/i.test(lowercaseAnswer) || /%/.test(lowercaseAnswer) || /rate\b/.test(lowercaseAnswer);
                 let unit = 'number';
                 const numericVal = parseFloat(String(raw));
-                // Explicit percent token wins
-                if (/%/.test(String(raw))) {
-                  unit = 'percent';
+                // Explicit percent token wins, but if priceBreakdowns contain the same numeric monetary value
+                // treat it as 'usd' (assistant sometimes writes money with a trailing '%'). We'll consult stored priceBreakdowns.
+                const rawIsPercent = /%/.test(String(raw));
+                if (rawIsPercent) {
+                  // check stored priceBreakdowns for numeric monetary match
+                  try {
+                    const pb = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+                    const m = String(raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+                    if (m) {
+                      const num = Number(m[1]);
+                      const found = (pb || []).some(e => {
+                        if (e && e.totalCost != null && Math.abs(Number(e.totalCost) - num) < 1e-6) return true;
+                        return (e.components || []).some(c => c && c.value != null && Math.abs(Number(c.value) - num) < 1e-6);
+                      });
+                      if (found) {
+                        unit = 'usd';
+                      } else {
+                        unit = 'percent';
+                      }
+                    } else {
+                      unit = 'percent';
+                    }
+                  } catch (e) {
+                    unit = 'percent';
+                  }
                 } else if (/irr/i.test(String(v.label || '')) || /rate/i.test(String(v.label || ''))) {
                   // labeled IRR/rate entries are percent-like. Accept larger-than-1 values too (e.g., '17%')
                   unit = 'percent';
@@ -579,6 +728,35 @@
                 return Object.assign({}, v, { unit });
               } catch (e) { return v; }
             });
+            // ROOT FIX: if any annotated IRR numeric token exactly matches a monetary value
+            // from the parsed priceBreakdowns, convert it to 'usd', attach the matched label
+            // and mark source:'paired'. This prevents money tokens accidentally labeled as percent
+            // from being rendered incorrectly in the dashboard.
+            try {
+              const pb = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+              const moneyIndex = [];
+              (pb || []).forEach(entry => {
+                if (entry && entry.totalCost != null) moneyIndex.push({ value: Number(entry.totalCost), label: `Total (${entry.plantName||entry.plantId||''})`, source: entry.source || null });
+                (entry.components || []).forEach(c => { if (c && c.value != null) moneyIndex.push({ value: Number(c.value), label: c.label || String(c.value), source: c.source || null }); });
+              });
+              annotated.forEach(a => {
+                try {
+                  const raw = String(a && (a.raw || a.irr) || '');
+                  const m = String(a && a.irr || raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+                  if (!m) return;
+                  const num = Number(m[1]);
+                  if (isNaN(num)) return;
+                  const match = moneyIndex.find(mi => Math.abs(Number(mi.value) - num) < 1e-6);
+                  if (match) {
+                    a.unit = 'usd';
+                    a.label = a.label || match.label;
+                    a.source = a.source || 'paired';
+                    a.raw = String(Number(num).toFixed(2));
+                    a.irr = a.raw;
+                  }
+                } catch (e) { /* per-entry ignore */ }
+              });
+            } catch (e) { /* non-fatal */ }
             localStorage.setItem('irrValues', JSON.stringify(annotated));
             try {
               const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
