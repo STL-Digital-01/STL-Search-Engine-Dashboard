@@ -332,6 +332,63 @@
   // Note: price breakdown UI is removed, but reading this allows matching labels for Key Metrics.
   let pbList = [];
   try { pbList = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]'); } catch (e) { pbList = []; }
+  // Conservative convenience: if stored irrValues contain percent-like entries
+  // that numerically match monetary values in priceBreakdowns, convert them to
+  // unit 'usd' so the dashboard displays them as dollar values. This helps when
+  // assistant text accidentally annotated money with '%'. We only convert when
+  // there's a clear numeric match to avoid misinterpreting genuine percent rates.
+  try {
+    const irrStored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+    if (Array.isArray(irrStored) && irrStored.length && Array.isArray(pbList) && pbList.length) {
+      const EPS2 = 1e-6;
+      // collect monetary candidates from pbList
+      const monetaryVals = [];
+      pbList.forEach(e => {
+        if (e && e.totalCost !== null && e.totalCost !== undefined) monetaryVals.push(Number(e.totalCost));
+        (e.components || []).forEach(c => { if (c && c.value !== null && c.value !== undefined) monetaryVals.push(Number(c.value)); });
+      });
+      let changed = false;
+      irrStored.forEach((entry, idx) => {
+        try {
+          const raw = String((entry && (entry.raw || entry.irr)) || '');
+          // robust percent-like detection: raw contains '%', or stored unit indicates percent,
+          // or irr/raw fields contain '%' even if raw didn't (some parsers normalize differently)
+          const unit = entry && entry.unit ? String(entry.unit).toLowerCase() : '';
+          const looksLikePercent = /%/.test(raw) || /%/.test(String(entry && entry.irr || '')) || unit === 'percent' || unit === '%';
+          if (!looksLikePercent) return; // only convert percent-like entries
+          const m = String(entry && entry.irr || raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+          if (!m) return;
+          const num = Number(m[1]);
+          if (isNaN(num)) return;
+          // Try to find a matching component object (not just the numeric value) so we can inherit its label
+          const matchComp = (function(){
+            for (const e of pbList) {
+              if (e && e.totalCost !== null && e.totalCost !== undefined && Math.abs(Number(e.totalCost) - num) < EPS2) {
+                return { label: `Total (${e.plantName || e.plantId || ''})`, source: e.source || null };
+              }
+              for (const c of (e.components || [])) {
+                if (c && c.value !== null && c.value !== undefined && Math.abs(Number(c.value) - num) < EPS2) {
+                  return { label: c.label || String(c.value), source: c.source || null };
+                }
+              }
+            }
+            return null;
+          })();
+          if (matchComp) {
+            entry.unit = 'usd';
+            entry.irr = Number(num).toFixed(2);
+            entry.raw = entry.irr;
+            entry.source = entry.source || 'fixed-by-dashboard';
+            // attach label if found
+            if (matchComp.label) entry.label = entry.label || matchComp.label;
+            if (matchComp.source) entry.source = entry.source || matchComp.source;
+            changed = true;
+          }
+        } catch (e) { /* ignore per-entry errors */ }
+      });
+      if (changed) localStorage.setItem('irrValues', JSON.stringify(irrStored));
+    }
+  } catch (e) { /* non-fatal */ }
       // Flatten components for quick numeric matching with metadata: [{value, label, type, plantId, plantName, material}]
       const pbComponents = [];
       const lowestTotalByMaterial = {};
@@ -360,15 +417,71 @@
         }
         (entry.components || []).forEach(c => {
           if (c && (c.value !== null && c.value !== undefined)) {
-            // normalize label using canonicalMap if possible
+            // preserve assistant-provided labels when present. Only apply canonicalMap
+            // when the original label exactly matches a known ambiguous key (e.g. 'production').
             let lab = (c.label || String(c.value)).trim();
             const key = String(lab).toLowerCase();
-            if (canonicalMap[key]) lab = canonicalMap[key];
+            // apply canonical mapping only when the original label exactly equals a canonical key
+            if ((!c.label || String(c.label).trim() === '') && canonicalMap[key]) {
+              lab = canonicalMap[key];
+            } else if (canonicalMap[key] && String(c.label || '').trim().toLowerCase() === key) {
+              lab = canonicalMap[key];
+            }
             const unit = c.unit || 'usd';
-            pbComponents.push({ value: Number(c.value), label: lab, type: 'component', plantId, plantName, material, unit });
+            // preserve source (e.g., 'paired') from widget parsing when present
+            const src = c.source || null;
+            pbComponents.push({ value: Number(c.value), label: lab, type: 'component', plantId, plantName, material, unit, source: src });
           }
         });
       });
+      // Heuristic normalization: if a plant has multiple components all labeled 'Production Cost'
+      // but also has a Vendor Price and a Total, try to infer Transport/Holding labels for the
+      // smaller duplicate components. This is conservative and only runs when vendor and total exist.
+      try {
+        const byPlant = {};
+        pbComponents.forEach(c => {
+          const pid = (c.plantId || c.plantName || '').trim();
+          byPlant[pid] = byPlant[pid] || [];
+          byPlant[pid].push(c);
+        });
+        Object.keys(byPlant).forEach(pid => {
+          const comps = byPlant[pid];
+          const vendor = comps.find(x => x.label && x.label.toLowerCase().includes('vendor'));
+          const total = comps.find(x => x.type === 'total');
+          if (!vendor || !total) return; // need both to run
+          // find components labeled production cost
+          const prodCandidates = comps.filter(x => x.type === 'component' && x.label && x.label.toLowerCase().includes('production'));
+          if (prodCandidates.length < 2) return;
+          // sort by descending value and keep the largest as production; reassign next as transport, then holding
+          const sorted = prodCandidates.slice().filter(x => !isNaN(x.value)).sort((a,b) => b.value - a.value);
+          if (sorted.length < 2) return;
+          // conservative guard: ensure values look small relative to total (avoid relabeling large entries)
+          const relGuard = (v) => (Math.abs(v) <= Math.max(1, Math.abs(total.value) * 0.25));
+          // assign labels to 2 smaller ones if they pass guard
+          for (let i = 1; i < Math.min(sorted.length, 3); i++) {
+            const c = sorted[i];
+            if (!c || isNaN(c.value)) continue;
+            if (!relGuard(c.value)) continue;
+            if (i === 1) c.label = 'Transport Cost';
+            else if (i === 2) c.label = 'Holding Cost';
+            c.source = c.source || 'inferred';
+          }
+        });
+      } catch (e) { /* non-fatal */ }
+      // Count how many 'paired' signals each plant+material has. We'll prefer
+      // components coming from plants with more paired evidence when resolving
+      // ambiguous matches (tie-breaker).
+      const pairedCountByPlantMaterial = {};
+      pbComponents.forEach(c => {
+        try {
+          if (c && c.source === 'paired') {
+            const pid = (c.plantId || c.plantName || '').trim();
+            const key = `${c.material}||${pid}`;
+            pairedCountByPlantMaterial[key] = (pairedCountByPlantMaterial[key] || 0) + 1;
+          }
+        } catch (e) { /* ignore per-comp */ }
+      });
+
       const EPS = 1e-6;
       // Build a one-to-one greedy pairing between visible numeric values and component values
       // Greedy nearest-unused-component: for each visible numeric value (in any order), pick the closest unused component
@@ -448,12 +561,40 @@
       // helper: given a raw value (string or number), find a matching component label from pbComponents
       // Return a matched object for a numeric value: {label,type,plantId,plantName,material,isLowest}
   function getMatchedLabelForValue(rawValue, valueIndex) {
+        // helper: sanitize labels coming from assistant prose while preserving original
+        function sanitizeLabel(raw) {
+          if (!raw && raw !== 0) return '';
+          let s = String(raw || '').trim();
+          // remove common leading filler words
+          s = s.replace(/^\s*(and|the|for)\b[:\s-]*/i, '');
+          // remove trailing filler like 'is', 'are', 'at', 'of'
+          s = s.replace(/\b(is|are|at|of)\b[\s:]*/ig, '');
+          // collapse multiple spaces and punctuation
+          s = s.replace(/[\(\)\:\.\,]+/g, ' ').replace(/\s+/g, ' ').trim();
+          // canonicalize common component words conservatively
+          const low = s.toLowerCase();
+          if (/vendor/.test(low)) return 'Vendor Price';
+          if (/production/.test(low) || /productions? cost/.test(low)) return 'Production Cost';
+          if (/transport/.test(low)) return 'Transport Cost';
+          if (/holding/.test(low)) return 'Holding Cost';
+          // fallback: title-case the cleaned string
+          return s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+
+        function cloneAndSanitize(obj) {
+          if (!obj) return null;
+          const out = Object.assign({}, obj);
+          out.originalLabel = out.label;
+          out.label = sanitizeLabel(out.label || String(out.value || ''));
+          return out;
+        }
         // rawValue may contain appended text (e.g. '6.60PL02 Silvassa...') — extract first numeric token
         if (rawValue === null || rawValue === undefined) return null;
         const str = String(rawValue).trim();
         const numMatch = str.match(/([0-9]+(?:\.[0-9]+)?)/);
         if (!numMatch) return null;
-  const num = parseFloat(numMatch[1]);
+          const num = parseFloat(numMatch[1]);
+          const EPS = 1e-6;
         if (isNaN(num)) return null;
         // Heuristic: detect if the raw token looks like a percentage (contains '%')
         // Also, if a valueIndex is provided, inspect the stored irrValues entry to see if it was a labeled IRR (e.g. entry.label contains 'IRR' or entry.raw contains '%')
@@ -480,22 +621,127 @@
           if (entry && entry.raw && /%/.test(String(entry.raw))) tokenUnit = 'percent';
         } catch (e) { /* ignore */ }
 
-        // If we have a precomputed mapping for this value index, prefer it
+        // Strong override: if any component was parsed with source:'paired' and its
+        // numeric value exactly matches this token, prefer it immediately. This
+        // prevents duplicates (e.g. PL02 production copies) from taking precedence
+        // over explicit assistant-parsed pairs.
+        try {
+          const pairedExact = pbComponents.filter(pc => pc.type === 'component' && pc.source === 'paired' && !isNaN(pc.value) && Math.abs(Number(pc.value) - num) < EPS);
+          if (pairedExact && pairedExact.length) {
+            // prefer vendor -> production -> any paired; tiebreak by pairedCount
+            const vendor = pairedExact.find(c => c.label && /vendor/i.test(String(c.label)));
+            const production = pairedExact.find(c => c.label && /production/i.test(String(c.label)));
+            const chooseList = vendor ? [vendor] : (production ? [production] : pairedExact.slice());
+            chooseList.sort((a,b) => {
+              const keyA = `${a.material}||${(a.plantId||a.plantName||'').trim()}`;
+              const keyB = `${b.material}||${(b.plantId||b.plantName||'').trim()}`;
+              return (pairedCountByPlantMaterial[keyB] || 0) - (pairedCountByPlantMaterial[keyA] || 0);
+            });
+            return cloneAndSanitize(chooseList[0]);
+          }
+        } catch (e) { /* ignore paired override failures */ }
+
+        // If we have a precomputed mapping for this value index, prefer it,
+        // but first check for exact total matches and prefer totals (plant totals)
+        // over anonymous component mappings. Also prefer paired-origin components
+        // when present.
         if (typeof valueIndex === 'number' && valueToComponentMap[valueIndex]) {
           const mapped = valueToComponentMap[valueIndex];
-          if (mapped) return Object.assign({}, mapped);
+          try {
+            // Prefer mapped/paired/component candidates first. Only if none of
+            // these are present should we fall back to returning an exact total.
+            // If mapped component was derived from pairing, prefer it
+            if (mapped && mapped.source === 'paired') return cloneAndSanitize(mapped);
+            // Try to find any paired components with same numeric value. If there
+            // are multiple, pick the one from the plant that has the most paired
+            // evidence for this material (conservative tie-breaker).
+            const pairedSameCandidates = pbComponents.filter(pc => pc.type === 'component' && pc.source === 'paired' && !isNaN(pc.value) && Math.abs(Number(pc.value) - num) < EPS);
+            if (pairedSameCandidates && pairedSameCandidates.length) {
+              const best = pairedSameCandidates.slice().sort((a,b) => {
+                const keyA = `${a.material}||${(a.plantId||a.plantName||'').trim()}`;
+                const keyB = `${b.material}||${(b.plantId||b.plantName||'').trim()}`;
+                const scoreA = pairedCountByPlantMaterial[keyA] || 0;
+                const scoreB = pairedCountByPlantMaterial[keyB] || 0;
+                if (scoreB !== scoreA) return scoreB - scoreA;
+                return 0;
+              })[0];
+              if (best) return cloneAndSanitize(best);
+            }
+          } catch (e) { /* ignore and fallthrough to mapped fallback */ }
+          if (mapped) {
+            try {
+              // Look for any component candidates (across all plants) that match this numeric value.
+              const compCandidatesAll = pbComponents.filter(pc => pc.type === 'component' && !isNaN(pc.value) && Math.abs(Number(pc.value) - num) < EPS);
+              if (compCandidatesAll && compCandidatesAll.length) {
+                // Prefer a 'Vendor Price' candidate if present (even if plantId is blank)
+                // Tolerant vendor match: match 'vendor' anywhere in the label (covers "And Vendor Price Is" etc.)
+                const vendor = compCandidatesAll.find(c => c.label && /vendor/i.test(String(c.label)));
+                if (vendor) return cloneAndSanitize(vendor);
+                // If there are candidates with preferred labels, prefer the plant-less/global one
+                const preferredLabels = ['production cost','vendor price','production','vendor'];
+                for (const plab of preferredLabels) {
+                  const matches = compCandidatesAll.filter(c => c.label && String(c.label).toLowerCase().trim() === plab);
+                  if (matches.length) {
+                    // prefer global/plant-less candidate if available
+                    const global = matches.find(m => !(m.plantId || m.plantName));
+                    if (global) return cloneAndSanitize(global);
+                    // otherwise return any exact label match
+                    return cloneAndSanitize(matches[0]);
+                  }
+                }
+                // Prefer any paired-sourced candidate, break ties by paired-count
+                const pairedCands = compCandidatesAll.filter(c => c.source === 'paired');
+                if (pairedCands.length) {
+                  const best = pairedCands.slice().sort((a,b) => {
+                    const keyA = `${a.material}||${(a.plantId||a.plantName||'').trim()}`;
+                    const keyB = `${b.material}||${(b.plantId||b.plantName||'').trim()}`;
+                    return (pairedCountByPlantMaterial[keyB] || 0) - (pairedCountByPlantMaterial[keyA] || 0);
+                  })[0];
+                  if (best) return cloneAndSanitize(best);
+                }
+              }
+            } catch (e) { /* ignore */ }
+            return cloneAndSanitize(mapped);
+          }
         }
         const candidates = [];
         // numeric epsilon matches (tolerant to small float issues) and two-decimal rounding
         const target2 = Number(num).toFixed(2);
+        const percentMonetaryCandidates = [];
         for (const pc of pbComponents) {
           const compUnit = pc.unit || 'usd';
-          // If token is percent and component is monetary, skip it
-          if (tokenUnit === 'percent' && compUnit === 'usd') continue;
           // If both units are known and incompatible, skip
           if (tokenUnit !== 'number' && compUnit !== 'unknown' && tokenUnit !== compUnit) continue;
-          if (!isNaN(pc.value) && Math.abs(pc.value - num) < EPS) candidates.push(pc);
-          else if (!isNaN(pc.value) && Number(pc.value).toFixed(2) === target2) candidates.push(pc);
+          // Normal case: units compatible or token is numeric
+          if (!isNaN(pc.value) && Math.abs(pc.value - num) < EPS) {
+            if (tokenUnit === 'percent' && compUnit === 'usd') {
+              // candidate where percent token numerically equals a monetary component
+              percentMonetaryCandidates.push(pc);
+            } else {
+              candidates.push(pc);
+            }
+          } else if (!isNaN(pc.value) && Number(pc.value).toFixed(2) === target2) {
+            if (tokenUnit === 'percent' && compUnit === 'usd') {
+              percentMonetaryCandidates.push(pc);
+            } else {
+              candidates.push(pc);
+            }
+          }
+        }
+        // If we didn't find standard candidates but there are percent->monetary numeric matches,
+        // allow them only when we have additional evidence: paired source or label hints in stored irr entry
+        if (!candidates.length && percentMonetaryCandidates.length) {
+          try {
+            const stored = JSON.parse(localStorage.getItem('irrValues') || '[]');
+            const entry = stored[valueIndex] || {};
+            const labelHints = ['vendor','production','transport','holding','price','cost'];
+            const entryStr = (entry && (entry.label || entry.raw || entry.irr)) ? String(entry.label || entry.raw || entry.irr).toLowerCase() : '';
+            // prefer paired-origin candidates first
+            const pairedFirst = percentMonetaryCandidates.sort((a,b) => ((b.source === 'paired') - (a.source === 'paired')));
+            // accept a candidate if it was paired, or if stored entry contains a monetary hint
+            const accepted = pairedFirst.filter(c => (c && c.source === 'paired') || labelHints.some(h => entryStr.includes(h)));
+                if (accepted.length) candidates.push(...accepted);
+          } catch (e) { /* ignore */ }
         }
         // fallback to formatted string comparison
         if (!candidates.length) {
@@ -512,18 +758,25 @@
           const preferred = ["Vendor Price","Production Cost","Transport Cost","Holding Cost"];
           // Prefer candidates that match token unit first
           const unitMatched = candidates.filter(c => ((c.unit || 'usd') === tokenUnit));
+          // If any candidates were discovered by the widget pairing logic ('paired'), prefer them first
+          const pairedPrefer = (arr) => {
+            const paired = arr.filter(x => x && x.source === 'paired');
+            if (paired.length) return paired.concat(arr.filter(x => x && x.source !== 'paired'));
+            return arr;
+          };
+          const unitMatchedOrdered = pairedPrefer(unitMatched.length ? unitMatched : candidates);
           for (const pref of preferred) {
-            const found = (unitMatched.length ? unitMatched : candidates).find(c => c && c.label && c.label.toLowerCase() === pref.toLowerCase());
+            const found = unitMatchedOrdered.find(c => c && c.label && c.label.toLowerCase() === pref.toLowerCase());
             if (found) return Object.assign({}, found);
           }
           const fallbackPreferred = ["vendor","production","transport","holding"];
           for (const fp of fallbackPreferred) {
-            const found = (unitMatched.length ? unitMatched : candidates).find(c => c && c.label && c.label.toLowerCase().includes(fp));
+            const found = unitMatchedOrdered.find(c => c && c.label && c.label.toLowerCase().includes(fp));
             if (found) return Object.assign({}, found);
           }
-          const comp = candidates.find(c => c.type === 'component');
-          if (comp) return Object.assign({}, comp);
-          const tot = Object.assign({}, candidates[0]);
+            const comp = candidates.find(c => c.type === 'component');
+          if (comp) return cloneAndSanitize(comp);
+          const tot = cloneAndSanitize(candidates[0]);
           if (tot && tot.type === 'total') {
             tot.isLowest = (typeof lowestTotalByMaterial[tot.material] !== 'undefined' && Math.abs(tot.value - lowestTotalByMaterial[tot.material]) < EPS);
           }
@@ -538,12 +791,12 @@
             const diff = Math.abs(Number(pc.value) - num);
             if (diff < bestDiff) { bestDiff = diff; best = pc; }
           }
-          if (best) {
+              if (best) {
             // Accept if difference within absolute 0.25 or within 5% relative
             const absThreshold = 0.25;
             const relThreshold = Math.abs(num) * 0.05;
             if (bestDiff <= absThreshold || bestDiff <= relThreshold) {
-              return Object.assign({}, best);
+              return cloneAndSanitize(best);
             }
           }
         }
@@ -597,6 +850,15 @@
           else label = `Value ${i+1}`;
         } else {
           label = tokenUnit === 'percent' ? (!isNaN(num) ? (Number(num).toFixed(4) + '%') : `Value ${i+1}`) : `Value ${i+1}`;
+        }
+        // If a matched component comes from a paired parse, prefer it as the primary label
+        // for non-percent tokens. This makes assistant-provided labels (e.g., 'Vendor Price')
+        // replace noisy stored labels like 'Production Cost' when appropriate.
+        if (tokenUnit !== 'percent') {
+          const forcedMatch = typeof getMatchedLabelForValue === 'function' ? getMatchedLabelForValue((typeof d === 'object' && d !== null) ? d.irr : d, i) : null;
+          if (forcedMatch && forcedMatch.source === 'paired' && forcedMatch.label) {
+            label = forcedMatch.label;
+          }
         }
         // Only show the trend icon for percent/IRR tokens. Hide for monetary/component values.
         let icon = tokenUnit === 'percent' ? '<span class="metric-icon">📈</span>' : '';
@@ -684,6 +946,13 @@
             const numVal = parseFloat(String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || value);
             const plantTitle = `${matchedObj.plantName || ''} (${matchedObj.plantId || ''})`.trim();
             label = `${plantTitle} has a total cost of $${Number(numVal).toFixed(2)}` + (matchedObj.isLowest ? ' (Lowest)' : '');
+          }
+        }
+        // If original label was not generic but matchedObj is paired, prefer matchedObj label
+        if (tokenUnit !== 'percent' && matchedObj && matchedObj.source === 'paired') {
+          if (matchedObj.type === 'component') {
+            const numVal = parseFloat(String(value).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || value);
+            label = `${matchedObj.label} ($${Number(numVal).toFixed(2)})`;
           }
         }
         // Format display value: percent tokens get 4-decimal percent formatting; others that look like money get currency
