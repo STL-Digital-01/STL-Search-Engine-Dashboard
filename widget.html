@@ -599,6 +599,8 @@
             // Production Cost\n5.00\nVendor Price\n1.00
             try {
               const lines = String(answerText || '').split(/\r?\n/);
+              // Blacklist of generic labels we should NOT treat as meaningful pairs for this answer
+              const LABEL_BLACKLIST = [/^total\b/i, /^total\s*\(\s*\)\s*$/i, /^production cost$/i, /^vendor price$/i, /^the production cost is$/i, /^and the vendor price is$/i];
               for (let i = 0; i < lines.length; i++) {
                 const a = (lines[i] || '').trim();
                 if (!a || !/[A-Za-z]/.test(a)) continue;
@@ -611,6 +613,9 @@
                   if (nm) { foundNum = Number(nm[1]); break; }
                 }
                 if (foundNum === null) continue;
+                // skip labels that are generic or empty parentheses like 'Total ()'
+                if (LABEL_BLACKLIST.some(rx => rx.test(a))) continue;
+                if (/\(\s*\)\s*$/.test(a)) continue;
                 const normLabel = capitalizeLabel(a.replace(/[\(\),:\.]+$/g,'').trim());
                 // avoid duplicates: only push if not already present
                 if (!pairs.some(p => p.label === normLabel && Math.abs(p.value - foundNum) < 1e-6)) {
