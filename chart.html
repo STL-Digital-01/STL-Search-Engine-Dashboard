@@ -91,12 +91,15 @@
       console.log('[chart.html] Rendering IRR data:', irrData);
       // Build labels and values based on object structure
       const labels = irrData.map((d, i) => {
+        // Prefer explicit year or label. If none, use the numeric value as the label (formatted percent).
         if (typeof d === 'object' && d !== null) {
           if (d.year) return `Year ${d.year}`;
           if (d.label) return d.label;
-          return `Value ${i+1}`;
+          const v = parseFloat(d.irr || d.raw || d);
+          return isNaN(v) ? `IRR ${i+1}` : v.toFixed(4) + '%';
         } else {
-          return `Value ${i+1}`;
+          const v = parseFloat(d);
+          return isNaN(v) ? `IRR ${i+1}` : v.toFixed(4) + '%';
         }
       });
       const irrValues = irrData.map(d => typeof d === 'object' && d !== null ? parseFloat(d.irr) : parseFloat(d));

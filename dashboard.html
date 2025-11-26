@@ -151,7 +151,11 @@
           else if (matched.type === 'total') matchedText = `${matched.plantId || ''} ${matched.plantName || ''}`.trim() + (matched.isLowest ? ' (Lowest)' : '');
         }
         const displayRaw = tokenUnit === 'percent' ? (Number(String(raw).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || raw).toFixed(4) + '%') : String(raw);
-        return `<div class="flex justify-between"><div>Value ${i+1}</div><div class="font-mono">${escapeHtml(displayRaw)}</div><div class="text-slate-300">${escapeHtml(matchedText)}</div></div>`;
+        // Prefer a matched label, then explicit label/year from the data, otherwise show the numeric percent as label.
+        const dataLabel = (typeof d === 'object' && d !== null) ? (d.label || (d.year ? `Year ${d.year}` : null)) : null;
+        const numericLabel = (tokenUnit === 'percent') ? (Number(String(raw).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || raw).toFixed(4) + '%') : String(raw);
+        const displayLabel = matchedText || dataLabel || numericLabel || `IRR ${i+1}`;
+        return `<div class="flex justify-between"><div>${escapeHtml(displayLabel)}</div><div class="font-mono">${escapeHtml(displayRaw)}</div><div class="text-slate-300">${escapeHtml(matchedText)}</div></div>`;
       }).join('<hr/>');
       container.innerHTML = rows;
     }
