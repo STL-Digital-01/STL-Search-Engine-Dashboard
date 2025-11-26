@@ -195,6 +195,11 @@
             }
           };
 
+          // Debug: log outgoing payload so we can inspect what's sent to Discovery Engine
+          try {
+            console.log('Discovery Engine request payload:', JSON.parse(JSON.stringify(payload)));
+          } catch (e) { console.log('Payload (string):', String(JSON.stringify(payload))); }
+
           const res = await fetch(getApiUrl(), {
             method: 'POST',
             headers: {
@@ -203,8 +208,21 @@
             },
             body: JSON.stringify(payload)
           });
-          const data = await res.json();
-          console.log('Raw API response:', data);
+
+          // Try to parse JSON safely and print status + body for debugging 400/500 errors
+          let data;
+          try {
+            const text = await res.text();
+            try { data = JSON.parse(text); }
+            catch(_) { data = { _rawText: text }; }
+            console.log('Discovery Engine response status:', res.status, res.statusText);
+            console.log('Discovery Engine response body:', data);
+            if (!res.ok) {
+              console.error('Discovery Engine request failed', { status: res.status, body: data });
+            }
+          } catch (e) {
+            console.error('Failed to read Discovery Engine response', e);
+          }
           const answerText = data?.answer?.answerText || '';
           // IRR extraction: support comma-separated lists, plain percent values, year-based, labeled IRRs, no duplicates 
           let irrValues = [];
@@ -757,20 +775,92 @@
                 } catch (e) { /* per-entry ignore */ }
               });
             } catch (e) { /* non-fatal */ }
-            localStorage.setItem('irrValues', JSON.stringify(annotated));
+            // Normalize IRR entries: detect whether numeric tokens are proportions (e.g. 0.1612 -> 16.12%)
+            // Heuristic: if any token in the batch contains an explicit '%' then treat small decimals (<1)
+            // without '%' as proportions. Otherwise, if the majority of numeric tokens are < 1, treat
+            // those as proportions as well. Convert all entries to percent values (unit: 'percent')
+            // and store the numeric percent in irr (as a string with 4 decimal places).
+            try {
+              function normalizeAnnotatedAsPercent(list) {
+                if (!Array.isArray(list) || !list.length) return list;
+                const parsed = list.map(a => {
+                  const raw = String(a && (a.raw || a.irr || '') || '').trim();
+                  const hasPct = /%/.test(raw);
+                  const n = parseFloat(raw.replace('%',''));
+                  return { raw, hasPct, n: isNaN(n) ? null : n };
+                }).filter(x => x.n !== null);
+                if (!parsed.length) return list;
+                const hasAnyPercentToken = parsed.some(p => p.hasPct);
+                const majorityLessThanOne = parsed.filter(p => Math.abs(p.n) < 1).length > parsed.length / 2;
+                const treatAsProportion = hasAnyPercentToken ? true : majorityLessThanOne;
+
+                list.forEach((a, idx) => {
+                  try {
+                    let raw = String(a && (a.raw || a.irr || '') || '').trim();
+                    if (!raw) return;
+                    const hadPct = /%/.test(raw);
+                    let num = parseFloat(raw.replace('%',''));
+                    if (isNaN(num)) return;
+                    if (!hadPct && treatAsProportion && Math.abs(num) < 1) {
+                      num = num * 100;
+                    }
+                    // store as percent string with 4 decimals (preserve trailing zeros)
+                    a.unit = 'percent';
+                    a.irr = num.toFixed(4);
+                    a.raw = a.irr;
+                  } catch (e) { /* ignore per-entry */ }
+                });
+                return list;
+              }
+              normalizeAnnotatedAsPercent(annotated);
+            } catch (e) { /* non-fatal */ }
+            // Remove assistant-listed tokens like "Value 1", "Value2", "Value-1", etc.
+            // Use a robust regex to catch multiple variants and formats.
+            const VALUE_TOKEN_RE = /\bvalue\s*[-:]?\s*\d+\b/i;
+            const VALUE_NO_SPACE_RE = /^value\d+/i;
+            const filteredAnnotated = (annotated || []).filter(v => {
+              try {
+                const lab = String(v.label || '').trim();
+                const raw = String(v.raw || v.irr || '').trim();
+                if (VALUE_TOKEN_RE.test(lab) || VALUE_TOKEN_RE.test(raw)) return false;
+                if (VALUE_NO_SPACE_RE.test(lab) || VALUE_NO_SPACE_RE.test(raw)) return false;
+                return true;
+              } catch (e) { return true; }
+            });
+            localStorage.setItem('irrValues', JSON.stringify(filteredAnnotated));
             try {
               const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]');
-              if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: annotated }, '*');
+              if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: filteredAnnotated }, '*');
             } catch (e) { /* silent */ }
           } catch (e) {
             console.error('Failed to persist irrValues', e);
           }
           let citeHtml = '';
           if(answerText){
+            // Remove any explicit 'Value N' lines that the assistant sometimes emits
+            // Catch multiple formats: 'Value 1', 'Value1', 'Value-1', 'Value 1:' etc.
+            const VALUE_LINE_RE = /\bvalue\s*[-:]?\s*\d+\b/i;
+            const VALUE_LINE_NOSPACE_RE = /^\s*value\d+/i;
+            // Remove duplicate lines from the assistant answer (preserve first occurrence)
+            const cleanedAnswer = (function dedupeAnswer(txt){
+              const lines = String(txt).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+              const out = [];
+              const seen = new Set();
+              lines.forEach(l => {
+                if (VALUE_LINE_RE.test(l) || VALUE_LINE_NOSPACE_RE.test(l)) return;
+                if (seen.has(l)) return;
+                seen.add(l);
+                out.push(l);
+              });
+              return out.join('\n').trim();
+            })(answerText);
+
+            
+
             answerRegion.innerHTML = `
               <div class="answer-card">
                  <span class="badge">Answer</span>
-                 <div class="answer-body">${escapeHtml(answerText)}</div>
+                 <div class="answer-body">${escapeHtml(cleanedAnswer)}</div>
                  ${citeHtml}
               </div>`;
           } else {
@@ -830,6 +920,38 @@
         if(!s) return '';
         return String(s).trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
       }
+
+      // Cleanup stored IRR values on load: normalize to 4-decimal percent strings and dedupe
+      function cleanupStoredIrrValues(){
+        try {
+          const raw = JSON.parse(localStorage.getItem('irrValues') || '[]');
+          if (!Array.isArray(raw) || !raw.length) return;
+          const seen = new Set();
+          const out = [];
+          raw.forEach(a => {
+            try {
+              if (a == null) return;
+              let s = (typeof a === 'object') ? (String(a.irr || a.raw || '')).trim() : String(a).trim();
+              if (!s) return;
+              const hasPct = /%/.test(s);
+              let n = parseFloat(s.replace('%',''));
+              if (isNaN(n)) return;
+              if (!hasPct && Math.abs(n) < 1) n = n * 100;
+              const formatted = Number(n.toFixed(4));
+              if (seen.has(formatted)) return;
+              seen.add(formatted);
+              out.push({ irr: formatted.toFixed(4), unit: 'percent', raw: formatted.toFixed(4) });
+            } catch (e) { /* ignore per-entry */ }
+          });
+          if (out.length) {
+            localStorage.setItem('irrValues', JSON.stringify(out));
+            try { const dashboardFrame = window.parent.document.querySelector('iframe[src="dashboard.html"]'); if (dashboardFrame) dashboardFrame.contentWindow.postMessage({ type: 'irrData', data: out }, '*'); } catch(e){}
+          }
+        } catch (e) { /* non-fatal */ }
+      }
+
+      // Run cleanup once at load so legacy duplicates are removed automatically
+      try { cleanupStoredIrrValues(); } catch(e){}
     })();
   </script>
  
