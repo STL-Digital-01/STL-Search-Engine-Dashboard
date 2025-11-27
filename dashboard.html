@@ -840,6 +840,9 @@
       document.getElementById('dumpMatchesBtn').addEventListener('click', () => dumpMatchDiagnostics());
       document.getElementById('closeDevPanel').addEventListener('click', () => { document.getElementById('devMatchPanel').style.display = 'none'; });
 
+      // Build money index from parsed components/totals to decide when to prefix $ in Key Metrics
+      const moneyIndex = pbComponents.map(c => Number(c.value)).filter(v => !isNaN(v));
+
       irrMetricCards.innerHTML = irrData.map((d, i) => {
         let rawValue = (typeof d === 'object' && d !== null) ? d.irr : d;
         let num = parseFloat(rawValue);
@@ -882,7 +885,7 @@
           if (matched.type === 'component') {
             const displayVal = (!isNaN(num) ? Number(num).toFixed(2) : (matched.value !== undefined ? Number(matched.value).toFixed(2) : String(rawValue)));
             label = `${matched.label}`;
-            // For monetary components, don't show the percent/trend icon; show value and small label
+            // For monetary components, show $ and small label
             return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div><span class="font-mono">$${displayVal}</span></div><div class="text-xs text-slate-300">${escapeHtml(matched.label || '')}</div></div></div>`;
           }
           // For totals, show plant name/ID and annotate lowest
@@ -898,10 +901,22 @@
         // If matched but original label was not generic, append small matched info beneath (only for non-percent tokens)
         if (matched) {
           const extra = matched.type === 'total' ? `${matched.plantId || ''} ${matched.plantName || ''}`.trim() : matched.label;
-          return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(String(rawValue))}${extra ? `<div class="text-xs text-slate-300">${escapeHtml(extra)}</div>` : ''}</div></div></div>`;
+          // format numeric display for money when applicable
+          const numericToken = String(rawValue).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
+          let displayStr = String(rawValue);
+          if (numericToken && (tokenUnit === 'usd' || moneyIndex.some(v => Math.abs(Number(v) - Number(numericToken)) < 1e-6))) {
+            displayStr = `$${Number(numericToken).toFixed(2)}`;
+          }
+          return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(displayStr)}${extra ? `<div class="text-xs text-slate-300">${escapeHtml(extra)}</div>` : ''}</div></div></div>`;
         }
 
-        return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(String(rawValue))}</div></div></div>`;
+        // final fallback: show numeric with $ if it appears monetary
+        const numericTokenFinal = String(rawValue).match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
+        let finalDisplay = String(rawValue);
+        if (numericTokenFinal && (tokenUnit === 'usd' || moneyIndex.some(v => Math.abs(Number(v) - Number(numericTokenFinal)) < 1e-6))) {
+          finalDisplay = `$${Number(numericTokenFinal).toFixed(2)}`;
+        }
+        return `<div class="metric-card animate-fadein">${icon}<div><div>${escapeHtml(label)}</div><div>${escapeHtml(finalDisplay)}</div></div></div>`;
       }).join('');
 
       // Extra Metrics as cards
