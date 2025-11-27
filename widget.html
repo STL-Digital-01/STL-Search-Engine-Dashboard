@@ -786,6 +786,19 @@
             // those as proportions as well. Convert all entries to percent values (unit: 'percent')
             // and store the numeric percent in irr (as a string with 4 decimal places).
             try {
+              // Build a quick money index from parsed priceBreakdowns so we can avoid
+              // treating monetary amounts as percents.
+              const _pb = JSON.parse(localStorage.getItem('priceBreakdowns') || '[]');
+              const moneyIndex = [];
+              (_pb || []).forEach(entry => {
+                try {
+                  if (entry && entry.totalCost != null) moneyIndex.push(Number(entry.totalCost));
+                } catch(e){}
+                (entry.components || []).forEach(c => { try { if (c && c.value != null) moneyIndex.push(Number(c.value)); } catch(e){} });
+              });
+              // Also include any explicit label/value pairs parsed earlier in this pass
+              try { if (Array.isArray(pairs) && pairs.length) pairs.forEach(p => { if (!isNaN(Number(p.value))) moneyIndex.push(Number(p.value)); }); } catch(e){}
+
               function normalizeAnnotatedAsPercent(list) {
                 if (!Array.isArray(list) || !list.length) return list;
                 const parsed = list.map(a => {
@@ -806,6 +819,23 @@
                     const hadPct = /%/.test(raw);
                     let num = parseFloat(raw.replace('%',''));
                     if (isNaN(num)) return;
+
+                    // If the raw string contains an explicit dollar sign, or the numeric
+                    // value matches a known monetary value parsed from priceBreakdowns,
+                    // prefer monetary unit (usd) and format with 2 decimals.
+                    // Known monetary label patterns
+                    const MONEY_LABEL_RE = /(vendor price|production cost|transport cost|holding cost|total per-unit cost|total cost|total)/i;
+                    const looksLikeMoney = /\$/.test(raw)
+                      || moneyIndex.some(v => Math.abs(Number(v) - Number(num)) < 1e-6)
+                      || (a && a.label && MONEY_LABEL_RE.test(String(a.label)))
+                      || (new RegExp(String(num).replace(/\./g,'\\.'), 'g').test(String(answerText || '')) && MONEY_LABEL_RE.test(String(answerText || '')));
+                    if (looksLikeMoney) {
+                      a.unit = 'usd';
+                      a.irr = Number(num).toFixed(2);
+                      a.raw = a.irr;
+                      return;
+                    }
+
                     if (!hadPct && treatAsProportion && Math.abs(num) < 1) {
                       num = num * 100;
                     }
